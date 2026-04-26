@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "GymApp",
-    "slug": "gym-app",
+    "name": "FitZen",
+    "slug": "fit-zen",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -33,7 +33,10 @@
       "supabaseUrl": "https://qnblkxfrbvgfiekjqkyr.supabase.co",
       "supabaseKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFuYmxreGZyYnZnZmlla2pxa3lyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0NDUxNjcsImV4cCI6MjA5MjAyMTE2N30.BWqlTxS-JCKu_4d_g8AwUWtQ653MnPq2HXf0KAd0j1U",
       "gymServerUrl": "https://zenvik-gym-server-production.up.railway.app",
-      "zenvikaiBackendUrl": "https://zenvik-root-server-production.up.railway.app"
+      "zenvikaiBackendUrl": "https://zenvik-root-server-production.up.railway.app",
+      "eas": {
+        "projectId": "0beac2a5-6f44-4579-aef8-5afb58b27b35"
+      }
     }
   }
 }
