@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "GymApp",
+    "slug": "gym-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "gymapp",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/images/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0D0F14"
+    },
+    "android": {
+      "backgroundColor": "#0D0F14",
+      "package": "com.gymapp.mobile",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/icon.png",
+        "backgroundColor": "#0D0F14"
+      }
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.gymapp.mobile"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "77bcef52-21ae-46e2-9fb2-a11e69606c74"
+      },
+      "supabaseUrl": "https://qnblkxfrbvgfiekjqkyr.supabase.co",
+      "supabaseKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFuYmxreGZyYnZnZmlla2pxa3lyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0NDUxNjcsImV4cCI6MjA5MjAyMTE2N30.BWqlTxS-JCKu_4d_g8AwUWtQ653MnPq2HXf0KAd0j1U",
+      "gymServerUrl": "https://gymapp-server-production.up.railway.app",
+      "zenvikaiBackendUrl": "https://zenvikai-backend-production.up.railway.app"
+    }
+  }
+}
