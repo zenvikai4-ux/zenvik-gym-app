@@ -122,7 +122,7 @@ export default function GymsScreen() {
   const [showAdd, setShowAdd] = useState(false);
   const [adding, setAdding] = useState(false);
   const [showPass, setShowPass] = useState(false);
-  const [form, setForm] = useState({ name: '', owner_name: '', email: '', phone: '', password: '', address: '', whatsapp_number: '', instagram_handle: '' });
+  const [form, setForm] = useState({ name: '', owner_name: '', email: '', phone: '', password: '', address: '', whatsapp_number: '', instagram_handle: '', capacity: '' });
   const [formError, setFormError] = useState('');
   const [editGym, setEditGym] = useState<any>(null);
   const [editForm, setEditForm] = useState({ name: '', email: '', phone: '', address: '' });
@@ -163,6 +163,7 @@ export default function GymsScreen() {
           address: form.address || null,
           whatsapp_number: form.whatsapp_number || null,
           instagram_handle: form.instagram_handle || null,
+          capacity: form.capacity ? parseInt(form.capacity) : 50,
         })
         .select()
         .single();
@@ -233,7 +234,7 @@ export default function GymsScreen() {
         details: `${form.name} (owner: ${form.owner_name})`,
       });
       setShowAdd(false);
-      setForm({ name: '', owner_name: '', email: '', phone: '', password: '', address: '', whatsapp_number: '', instagram_handle: '' });
+      setForm({ name: '', owner_name: '', email: '', phone: '', password: '', address: '', whatsapp_number: '', instagram_handle: '', capacity: '' });
     } catch (e: any) {
       setFormError(e.message || 'Failed to create gym');
     }
@@ -351,6 +352,7 @@ export default function GymsScreen() {
                 { label: 'Address', key: 'address', placeholder: 'Hyderabad, TS' },
                 { label: 'WhatsApp Business No.', key: 'whatsapp_number', placeholder: '+91 98765 43210' },
                 { label: 'Instagram Handle', key: 'instagram_handle', placeholder: '@gymname' },
+                { label: 'Gym Capacity (members)', key: 'capacity', placeholder: '100' },
               ].map(f => (
                 <View key={f.key} style={styles.fieldGroup}>
                   <Text style={styles.fieldLabel}>{f.label}</Text>

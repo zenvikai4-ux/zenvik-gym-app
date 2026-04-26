@@ -33,12 +33,7 @@
       "supabaseUrl": "https://qnblkxfrbvgfiekjqkyr.supabase.co",
       "supabaseKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFuYmxreGZyYnZnZmlla2pxa3lyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0NDUxNjcsImV4cCI6MjA5MjAyMTE2N30.BWqlTxS-JCKu_4d_g8AwUWtQ653MnPq2HXf0KAd0j1U",
       "gymServerUrl": "https://zenvik-gym-server-production.up.railway.app",
-      "zenvikaiBackendUrl": "https://zenvik-root-server-production.up.railway.app",
-      "router": {},
-      "eas": {
-        "projectId": "570bb017-3e49-4e1e-a0b6-48bf7bd983d6"
-      }
-    },
-    "owner": "zenvikai"
+      "zenvikaiBackendUrl": "https://zenvik-root-server-production.up.railway.app"
+    }
   }
 }
