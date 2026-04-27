@@ -1047,381 +1047,187 @@ const WA_CONN_MAP: Record<string, { label: string; color: string }> = {
   disconnected: { label: 'Disconnected', color: Colors.danger },
 };
 
-// WhatsApp setup uses direct Supabase updates (Meta API approach)
-// No QR scanning needed - gym owners configure their Meta API credentials
 
 function WhatsAppSection({ onClose }: { onClose: () => void }) {
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
   const { data: gyms = [] } = useGyms();
   const { data: logs = [], isLoading: loadingLogs } = useWhatsappLogs();
-  const insertLog = useInsertWhatsappLog();
+  const [tab, setTab] = useState<'setup' | 'logs'>('setup');
+  const [editingGymId, setEditingGymId] = useState<string | null>(null);
+  const [waForm, setWaForm] = useState({ whatsapp_number: '', whatsapp_phone_id: '', auto_reply_message: '' });
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState('');
 
-  const [tab, setTab] = useState<'setup' | 'broadcast' | 'logs'>('setup');
-
-  // ── Setup tab state ────────────────────────────────────────────────
-  const [gymStatuses, setGymStatuses] = useState<Record<string, GymConnStatus>>({});
-  // Per-gym QR data so multiple disconnected gyms show their QR simultaneously
-  const [gymQrData, setGymQrData] = useState<Record<string, string | null>>({});
-  const [gymQrLoading, setGymQrLoading] = useState<Record<string, boolean>>({});
-  const [gymQrError, setGymQrError] = useState<Record<string, string>>({});
-
-  // ── Broadcast tab state ────────────────────────────────────────────
-  const [broadcastGymId, setBroadcastGymId] = useState('');
-  const [broadcastPhone, setBroadcastPhone] = useState('');
-  const [broadcastMsg, setBroadcastMsg] = useState('');
-  const [broadcastError, setBroadcastError] = useState('');
-  const [broadcastSuccess, setBroadcastSuccess] = useState(false);
-
-  // ── Logs tab state ─────────────────────────────────────────────────
-  const [filterGym, setFilterGym] = useState('');
-  const filteredLogs = filterGym ? logs.filter((l: any) => l.gym_id === filterGym) : logs;
-
-  // Fetch status for all gyms and store results in gymStatuses
-  const fetchAllStatuses = useCallback(async () => {
-    if (gyms.length === 0) return;
-    const results: Record<string, GymConnStatus> = {};
-    await Promise.all(
-      gyms.map(async (gym: any) => {
-        try {
-          const res = await fetch(`${API_BASE}/health`);
-          if (res.ok) {
-            const data: GymConnStatus & { qr?: string | null } = await res.json();
-            results[gym.id] = data;
-            if (data.qr) setGymQrData(prev => ({ ...prev, [gym.id]: data.qr ?? null }));
-          }
-        } catch (err) {
-          console.warn('[WA] Status poll failed for gym', gym.id, err);
-        }
-      })
-    );
-    setGymStatuses(prev => ({ ...prev, ...results }));
-  }, [gyms]);
-
-  // Auto-start sessions for all disconnected gyms when Setup tab is opened,
-  // so QR codes appear automatically without requiring a "Scan QR" tap.
-  const initDisconnectedGyms = useCallback(async () => {
-    const disconnected = gyms.filter((g: any) => {
-      const s = gymStatuses[g.id];
-      return !s || s.status === 'disconnected';
-    });
-    for (const gym of disconnected) {
-      if (gymQrLoading[gym.id]) continue;
-      setGymQrLoading(prev => ({ ...prev, [gym.id]: true }));
-      setGymQrError(prev => ({ ...prev, [gym.id]: '' }));
-      // Fire in background — status poll will surface the QR within 3s
-      fetch(`${API_BASE}/health`)
-        .then(async res => {
-          const data = await res.json();
-          if (!res.ok) {
-            setGymQrError(prev => ({ ...prev, [gym.id]: data.error ?? 'Failed to get QR' }));
-            return;
-          }
-          if (data.status === 'connected') {
-            setGymStatuses(prev => ({ ...prev, [gym.id]: { status: 'connected', phone: data.phone, hasQr: false } }));
-          } else if (data.qr) {
-            setGymQrData(prev => ({ ...prev, [gym.id]: data.qr }));
-            setGymStatuses(prev => ({ ...prev, [gym.id]: { ...(prev[gym.id] ?? {}), status: 'connecting', hasQr: true } }));
-          }
-        })
-        .catch(() => {
-          setGymQrError(prev => ({ ...prev, [gym.id]: 'Could not initialize session' }));
-        })
-        .finally(() => {
-          setGymQrLoading(prev => ({ ...prev, [gym.id]: false }));
-        });
-    }
-  }, [gyms, gymStatuses, gymQrLoading]);
-
-  useEffect(() => {
-    if (tab === 'setup') {
-      fetchAllStatuses().then(() => initDisconnectedGyms());
-    }
-  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Poll ALL non-connected gyms every 3s. The status endpoint returns fresh QR
-  // base64 so displayed images update automatically when Baileys regenerates them.
-  // If a gym unexpectedly transitions to 'disconnected' during polling, a new
-  // session is auto-initiated so the QR reappears without a tab switch.
-  useEffect(() => {
-    if (tab !== 'setup') return;
-    const interval = setInterval(async () => {
-      const nonConnectedIds = gyms
-        .filter((g: any) => gymStatuses[g.id]?.status !== 'connected')
-        .map((g: any) => g.id as string);
-      for (const gymId of nonConnectedIds) {
-        try {
-          const res = await fetch(`${API_BASE}/health`);
-          if (!res.ok) continue;
-          const data: GymConnStatus & { qr?: string | null } = await res.json();
-          const prevStatus = gymStatuses[gymId]?.status;
-          setGymStatuses(prev => ({ ...prev, [gymId]: data }));
-          if (data.status === 'connected') {
-            setGymQrData(prev => ({ ...prev, [gymId]: null }));
-          } else if (data.qr) {
-            setGymQrData(prev => ({ ...prev, [gymId]: data.qr ?? null }));
-          } else if (data.status === 'disconnected' && prevStatus !== 'disconnected' && !gymQrLoading[gymId]) {
-            // Unexpected drop — restart session so QR reappears automatically
-            setGymQrLoading(prev => ({ ...prev, [gymId]: true }));
-            setGymQrData(prev => ({ ...prev, [gymId]: null }));
-            fetch(`${API_BASE}/health`)
-              .then(async r => {
-                const d = await r.json();
-                if (d.qr) setGymQrData(prev => ({ ...prev, [gymId]: d.qr }));
-              })
-              .catch((err) => { console.warn('[WA] QR fetch failed for gym', gymId, err); })
-              .finally(() => setGymQrLoading(prev => ({ ...prev, [gymId]: false })));
-          }
-        } catch (err) {
-          console.warn('[WA] Poll interval error for gym', gymId, err);
-        }
-      }
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [tab, gyms, gymStatuses, gymQrLoading]);
-
-  const handleDisconnect = async (gymId: string) => {
-    try {
-      const discRes = await fetch(`${API_BASE}/health`);
-      if (!discRes.ok) {
-        const errData = await discRes.json().catch(() => ({}));
-        setGymQrError(prev => ({ ...prev, [gymId]: errData.error ?? 'Disconnect failed' }));
-        console.warn('[WA] Disconnect failed for gym', gymId, errData);
-        return;
-      }
-      setGymStatuses(prev => ({ ...prev, [gymId]: { status: 'disconnected', phone: null, hasQr: false } }));
-      setGymQrData(prev => ({ ...prev, [gymId]: null }));
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      // Auto-restart a fresh session so a new QR appears without requiring a tab switch
-      setGymQrLoading(prev => ({ ...prev, [gymId]: true }));
-      setGymQrError(prev => ({ ...prev, [gymId]: '' }));
-      fetch(`${API_BASE}/health`)
-        .then(async res => {
-          const data = await res.json();
-          if (!res.ok) {
-            setGymQrError(prev => ({ ...prev, [gymId]: data.error ?? 'Failed to restart session' }));
-            return;
-          }
-          if (data.status === 'connected') {
-            setGymStatuses(prev => ({ ...prev, [gymId]: { status: 'connected', phone: data.phone, hasQr: false } }));
-          } else if (data.qr) {
-            setGymQrData(prev => ({ ...prev, [gymId]: data.qr }));
-            setGymStatuses(prev => ({ ...prev, [gymId]: { ...(prev[gymId] ?? {}), status: 'connecting', hasQr: true } }));
-          }
-        })
-        .catch((err) => {
-          console.warn('[WA] Auto-restart failed for gym', gymId, err);
-          setGymQrError(prev => ({ ...prev, [gymId]: 'Could not restart session' }));
-        })
-        .finally(() => {
-          setGymQrLoading(prev => ({ ...prev, [gymId]: false }));
-        });
-    } catch (err) {
-      console.warn('[WA] handleAutoRestart error for gym', gymId, err);
-    }
-  };
-
-  const handleBroadcast = () => {
-    setBroadcastError('');
-    setBroadcastSuccess(false);
-    if (!broadcastGymId) { setBroadcastError('Please select a gym'); return; }
-    if (!broadcastMsg.trim()) { setBroadcastError('Message is required'); return; }
-    insertLog.mutate(
-      { gym_id: broadcastGymId, message: broadcastMsg.trim(), phone: broadcastPhone.trim() || undefined, status: 'pending' },
-      {
-        onSuccess: () => {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          setBroadcastMsg(''); setBroadcastPhone(''); setBroadcastGymId(''); setBroadcastSuccess(true);
-        },
-        onError: (e: any) => setBroadcastError(e.message),
-      }
-    );
+  const handleSaveWA = async (gymId: string) => {
+    setSaving(true);
+    setSaveMsg('');
+    const { error } = await supabase.from('gyms').update({
+      whatsapp_number: waForm.whatsapp_number || null,
+      whatsapp_phone_id: waForm.whatsapp_phone_id || null,
+      auto_reply_message: waForm.auto_reply_message || null,
+    }).eq('id', gymId);
+    setSaving(false);
+    if (error) { setSaveMsg('Error: ' + error.message); }
+    else { setSaveMsg('✅ Saved successfully!'); setEditingGymId(null); }
   };
 
   return (
     <View style={{ flex: 1, backgroundColor: Colors.background }}>
-      <SectionHeader title="WhatsApp" onClose={onClose} />
+      <SectionHeader title="WhatsApp Setup" onClose={onClose} />
 
-      <View style={{ flexDirection: 'row', paddingHorizontal: 16, paddingTop: 12, gap: 6 }}>
-        {([
-          { key: 'setup', label: 'Setup' },
-          { key: 'broadcast', label: 'Broadcast' },
-          { key: 'logs', label: 'Logs' },
-        ] as const).map(t => (
+      {/* Tab selector */}
+      <View style={{ flexDirection: 'row', margin: 16, backgroundColor: Colors.secondary, borderRadius: 12, padding: 4 }}>
+        {(['setup', 'logs'] as const).map(t => (
           <Pressable
-            key={t.key}
-            style={{ flex: 1, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1,
-              backgroundColor: tab === t.key ? '#25D36622' : Colors.secondary,
-              borderColor: tab === t.key ? '#25D366' : Colors.border }}
-            onPress={() => setTab(t.key)}
+            key={t}
+            style={[{ flex: 1, paddingVertical: 10, borderRadius: 9, alignItems: 'center' },
+              tab === t && { backgroundColor: Colors.card }]}
+            onPress={() => setTab(t)}
           >
-            <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 12, color: tab === t.key ? '#25D366' : Colors.textSecondary }}>{t.label}</Text>
+            <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13,
+              color: tab === t ? Colors.primary : Colors.textMuted }}>
+              {t === 'setup' ? 'Setup' : 'Message Logs'}
+            </Text>
           </Pressable>
         ))}
       </View>
 
       {tab === 'setup' && (
-        <ScrollView contentContainerStyle={{ padding: 16, gap: 10, paddingBottom: insets.bottom + 20 }}>
-          <View style={[section.card, { backgroundColor: Colors.secondary, borderColor: Colors.border }]}>
-            <View style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-start' }}>
-              <Ionicons name="information-circle-outline" size={15} color={Colors.info} style={{ marginTop: 1 }} />
-              <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.textSecondary, flex: 1, lineHeight: 17 }}>
-                Link each gym's WhatsApp number by scanning its QR code. Messages will be delivered via that gym's number.
+        <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }}>
+          {/* Info box */}
+          <View style={{ backgroundColor: Colors.info + '15', borderRadius: 12, padding: 14,
+            borderWidth: 1, borderColor: Colors.info + '40', flexDirection: 'row', gap: 10 }}>
+            <Ionicons name="information-circle-outline" size={18} color={Colors.info} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: Colors.info }}>
+                Meta WhatsApp API Setup
+              </Text>
+              <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.textSecondary, marginTop: 4, lineHeight: 18 }}>
+                Each gym needs a WhatsApp Business number added to your Meta account. Contact Zenvik AI to add a number.
               </Text>
             </View>
           </View>
 
-          {gyms.map((gym: any) => {
-            const s = gymStatuses[gym.id];
-            const connStatus = s?.status ?? 'disconnected';
-            const gymQr = gymQrData[gym.id];
-            const gymLoading = !!gymQrLoading[gym.id];
-            const gymErr = gymQrError[gym.id] ?? '';
-
-            return (
-              <View key={gym.id} style={section.card}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <Ionicons name="logo-whatsapp" size={18} color="#25D366" />
-                  <Text style={[section.name, { flex: 1 }]} numberOfLines={1}>{gym.name}</Text>
-                  <StatusBadge status={connStatus} map={WA_CONN_MAP} />
+          {gyms.map((gym: any) => (
+            <View key={gym.id} style={{ backgroundColor: Colors.card, borderRadius: 14, padding: 16,
+              borderWidth: 1, borderColor: Colors.border }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 15, color: Colors.text }}>{gym.name}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4,
+                      backgroundColor: gym.whatsapp_phone_id ? Colors.primary : Colors.danger }} />
+                    <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12,
+                      color: gym.whatsapp_phone_id ? Colors.primary : Colors.danger }}>
+                      {gym.whatsapp_phone_id ? 'Connected' : 'Not configured'}
+                    </Text>
+                  </View>
                 </View>
+                <Pressable
+                  onPress={() => {
+                    setEditingGymId(editingGymId === gym.id ? null : gym.id);
+                    setWaForm({
+                      whatsapp_number: gym.whatsapp_number || '',
+                      whatsapp_phone_id: gym.whatsapp_phone_id || '',
+                      auto_reply_message: gym.auto_reply_message || '',
+                    });
+                    setSaveMsg('');
+                  }}
+                  style={{ backgroundColor: Colors.primaryMuted, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 }}
+                >
+                  <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 12, color: Colors.primary }}>
+                    {editingGymId === gym.id ? 'Cancel' : 'Configure'}
+                  </Text>
+                </Pressable>
+              </View>
 
-                {connStatus === 'connected' && s?.phone && (
-                  <Text style={[section.sub, { marginTop: 4 }]}>+{s.phone}</Text>
-                )}
+              {gym.whatsapp_phone_id && (
+                <View style={{ gap: 4 }}>
+                  <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.textMuted }}>
+                    Number: {gym.whatsapp_number || 'Not set'}
+                  </Text>
+                  <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.textMuted }}>
+                    Phone ID: {gym.whatsapp_phone_id}
+                  </Text>
+                </View>
+              )}
 
-                {connStatus === 'connected' && (
+              {editingGymId === gym.id && (
+                <View style={{ marginTop: 12, gap: 10 }}>
+                  {[
+                    { key: 'whatsapp_number', label: 'WhatsApp Number', placeholder: '+91 98765 43210' },
+                    { key: 'whatsapp_phone_id', label: 'Phone Number ID (from Meta)', placeholder: '1234567890' },
+                    { key: 'auto_reply_message', label: 'Auto-reply Message (optional)', placeholder: 'Hi! Thanks for contacting us...' },
+                  ].map(f => (
+                    <View key={f.key}>
+                      <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.textMuted,
+                        textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>{f.label}</Text>
+                      <TextInput
+                        style={{ backgroundColor: Colors.secondary, borderRadius: 10, height: 44,
+                          paddingHorizontal: 12, fontFamily: 'Inter_400Regular', fontSize: 14,
+                          color: Colors.text, borderWidth: 1, borderColor: Colors.border }}
+                        placeholder={f.placeholder}
+                        placeholderTextColor={Colors.textMuted}
+                        value={(waForm as any)[f.key]}
+                        onChangeText={v => setWaForm(p => ({ ...p, [f.key]: v }))}
+                      />
+                    </View>
+                  ))}
+                  {!!saveMsg && (
+                    <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13,
+                      color: saveMsg.startsWith('✅') ? Colors.primary : Colors.danger }}>{saveMsg}</Text>
+                  )}
                   <Pressable
-                    style={{ marginTop: 10, height: 34, borderRadius: 8, alignItems: 'center', justifyContent: 'center',
-                      backgroundColor: Colors.secondary, borderWidth: 1, borderColor: Colors.danger + '66' }}
-                    onPress={() => handleDisconnect(gym.id)}
+                    style={{ backgroundColor: Colors.primary, borderRadius: 10, height: 44,
+                      alignItems: 'center', justifyContent: 'center', opacity: saving ? 0.6 : 1 }}
+                    onPress={() => handleSaveWA(gym.id)}
+                    disabled={saving}
                   >
-                    <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 12, color: Colors.danger }}>Disconnect</Text>
+                    {saving ? <ActivityIndicator color="#000" /> :
+                      <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 14, color: '#000' }}>Save Configuration</Text>
+                    }
                   </Pressable>
-                )}
-
-                {connStatus !== 'connected' && (
-                  <View style={{ marginTop: 12, alignItems: 'center', gap: 8 }}>
-                    {gymLoading && <ActivityIndicator color="#25D366" style={{ marginVertical: 20 }} />}
-                    {!!gymErr && (
-                      <View style={section.errorBox}>
-                        <Ionicons name="alert-circle-outline" size={13} color={Colors.danger} />
-                        <Text style={section.errorText}>{gymErr}</Text>
-                      </View>
-                    )}
-                    {!gymLoading && gymQr && (
-                      <View style={{ alignItems: 'center', gap: 6 }}>
-                        <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 12, color: Colors.textSecondary }}>
-                          Open WhatsApp → Linked Devices → Scan
-                        </Text>
-                        <View style={{ borderRadius: 12, overflow: 'hidden', borderWidth: 3, borderColor: '#25D366' }}>
-                          <Image source={{ uri: gymQr }} style={{ width: 220, height: 220 }} resizeMode="contain" />
-                        </View>
-                        <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>
-                          QR auto-refreshes every ~60 seconds
-                        </Text>
-                      </View>
-                    )}
-                    {!gymLoading && !gymQr && !gymErr && (
-                      <View style={{ alignItems: 'center', paddingVertical: 10, gap: 6 }}>
-                        <ActivityIndicator color="#25D366" />
-                        <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.textSecondary }}>
-                          {connStatus === 'connecting' ? 'Waiting for QR...' : 'Initializing session...'}
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                )}
-              </View>
-            );
-          })}
-
-          {gyms.length === 0 && <Text style={section.empty}>No gyms found</Text>}
-        </ScrollView>
-      )}
-
-      {tab === 'broadcast' && (
-        <ScrollView contentContainerStyle={{ padding: 16, gap: 10, paddingBottom: insets.bottom + 20 }}>
-          <View style={[section.card, { gap: 10 }]}>
-            <Text style={analytics.sectionTitle}>Send Broadcast Message</Text>
-            <GymPicker gyms={gyms} value={broadcastGymId} onChange={setBroadcastGymId} />
-            <TextInput
-              style={section.input}
-              placeholder="Phone Number (e.g. 9876543210)"
-              placeholderTextColor={Colors.textMuted}
-              keyboardType="phone-pad"
-              value={broadcastPhone}
-              onChangeText={setBroadcastPhone}
-            />
-            <TextInput
-              style={[section.input, { height: 100, textAlignVertical: 'top', paddingTop: 10 }]}
-              placeholder="Message *"
-              placeholderTextColor={Colors.textMuted}
-              multiline
-              value={broadcastMsg}
-              onChangeText={setBroadcastMsg}
-            />
-            {!!broadcastError && (
-              <View style={section.errorBox}>
-                <Ionicons name="alert-circle-outline" size={13} color={Colors.danger} />
-                <Text style={section.errorText}>{broadcastError}</Text>
-              </View>
-            )}
-            {broadcastSuccess && (
-              <View style={{ flexDirection: 'row', gap: 8, backgroundColor: Colors.primaryMuted, borderRadius: 10, padding: 10, borderWidth: 1, borderColor: Colors.primary + '40' }}>
-                <Ionicons name="checkmark-circle-outline" size={16} color={Colors.primary} />
-                <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.primary }}>Queued for delivery!</Text>
-              </View>
-            )}
-            <Pressable
-              style={[section.submitBtn, { backgroundColor: '#25D366' }]}
-              onPress={handleBroadcast}
-              disabled={insertLog.isPending}
-            >
-              {insertLog.isPending
-                ? <ActivityIndicator color="#fff" />
-                : (
-                  <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-                    <Ionicons name="logo-whatsapp" size={16} color="#fff" />
-                    <Text style={[section.submitBtnText, { color: '#fff' }]}>Send Message</Text>
-                  </View>
-                )}
-            </Pressable>
-            <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted, textAlign: 'center' }}>
-              Message will be delivered via the gym's linked WhatsApp number
-            </Text>
-          </View>
+                </View>
+              )}
+            </View>
+          ))}
         </ScrollView>
       )}
 
       {tab === 'logs' && (
-        <ScrollView contentContainerStyle={{ padding: 16, gap: 10, paddingBottom: insets.bottom + 20 }}>
-          <GymPicker gyms={[{ id: '', name: 'All Gyms' }, ...gyms]} value={filterGym} onChange={setFilterGym} />
-          {loadingLogs && <ActivityIndicator color="#25D366" />}
-          {filteredLogs.map((log: any) => (
-            <View key={log.id} style={section.card}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                <Ionicons name="logo-whatsapp" size={16} color="#25D366" />
-                <Text style={[section.name, { flex: 1 }]} numberOfLines={1}>{log.gym?.name ?? 'Unknown Gym'}</Text>
-                <StatusBadge status={log.status ?? 'pending'} map={WA_STATUS_MAP} />
+        <ScrollView contentContainerStyle={{ padding: 16, gap: 10 }}>
+          {loadingLogs ? <ActivityIndicator color={Colors.primary} /> :
+            logs.length === 0 ? (
+              <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+                <Ionicons name="chatbubble-outline" size={40} color={Colors.textMuted} />
+                <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 15, color: Colors.textMuted, marginTop: 12 }}>
+                  No message logs yet
+                </Text>
               </View>
-              {!!log.phone && <Text style={section.sub}>{log.phone}</Text>}
-              <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary, lineHeight: 18 }} numberOfLines={3}>{log.message}</Text>
-              <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>{fmtDate(log.created_at)}</Text>
-            </View>
-          ))}
-          {filteredLogs.length === 0 && !loadingLogs && <Text style={section.empty}>No WhatsApp logs yet</Text>}
+            ) : logs.map((log: any) => (
+              <View key={log.id} style={{ backgroundColor: Colors.card, borderRadius: 12, padding: 14,
+                borderWidth: 1, borderColor: Colors.border }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: Colors.text }}>
+                    {log.sender_name || 'System'}
+                  </Text>
+                  <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>
+                    {new Date(log.created_at).toLocaleDateString('en-IN')}
+                  </Text>
+                </View>
+                <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary }}>
+                  {log.message}
+                </Text>
+              </View>
+            ))
+          }
         </ScrollView>
       )}
     </View>
   );
 }
 
-// ─── BILLING SECTION ──────────────────────────────────────────────────────────
-const INV_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  paid: { label: 'Paid', color: Colors.primary },
-  pending: { label: 'Pending', color: Colors.warning },
-  overdue: { label: 'Overdue', color: Colors.danger },
-};
 
 function BillingSection({ onClose }: { onClose: () => void }) {
   const insets = useSafeAreaInsets();
@@ -2021,7 +1827,11 @@ function BroadcastOwnerModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <View style={[broadcastStyles.overlay]}>
+    <KeyboardAvoidingView
+      style={[broadcastStyles.overlay]}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
+      <Pressable style={{ flex: 1 }} onPress={onClose} />
       <View style={[broadcastStyles.sheet, { paddingBottom: insets.bottom + 20 }]}>
         <View style={broadcastStyles.header}>
           <Text style={broadcastStyles.title}>Broadcast Message</Text>
@@ -2068,7 +1878,7 @@ function BroadcastOwnerModal({ onClose }: { onClose: () => void }) {
           }
         </Pressable>
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -2134,7 +1944,11 @@ function SendQueryModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <View style={[broadcastStyles.overlay]}>
+    <KeyboardAvoidingView
+      style={[broadcastStyles.overlay]}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
+      <Pressable style={{ flex: 1 }} onPress={onClose} />
       <View style={[broadcastStyles.sheet, { paddingBottom: insets.bottom + 20 }]}>
         <View style={broadcastStyles.header}>
           <Text style={broadcastStyles.title}>Send a Query</Text>
@@ -2199,7 +2013,7 @@ function SendQueryModal({ onClose }: { onClose: () => void }) {
           </>
         )}
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
