@@ -342,9 +342,35 @@ export function useUpsertDietPlan() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (plan: any) => {
-      const { data, error } = await supabase.from('diet_plans').upsert(plan, { onConflict: 'client_profile_id,day_of_week,meal_slot' }).select().single();
-      if (error) throw error;
-      return data;
+      // Check if plan already exists
+      const { data: existing } = await supabase
+        .from('diet_plans')
+        .select('id')
+        .eq('client_profile_id', plan.client_profile_id)
+        .eq('day_of_week', plan.day_of_week)
+        .eq('meal_slot', plan.meal_slot)
+        .maybeSingle();
+
+      if (existing?.id) {
+        // Update
+        const { data, error } = await supabase
+          .from('diet_plans')
+          .update({ items: plan.items })
+          .eq('id', existing.id)
+          .select()
+          .single();
+        if (error) throw error;
+        return data;
+      } else {
+        // Insert
+        const { data, error } = await supabase
+          .from('diet_plans')
+          .insert(plan)
+          .select()
+          .single();
+        if (error) throw error;
+        return data;
+      }
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['diet_plans'] }),
   });
