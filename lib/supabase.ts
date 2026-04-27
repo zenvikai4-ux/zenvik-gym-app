@@ -11,11 +11,11 @@ const extra =
 
 const supabaseUrl: string =
   (extra.supabaseUrl as string | undefined)?.replace(/\/$/, '') ||
-  'https://qnblkxfrbvgfiekjqkyr.supabase.co';
+  'https://tacokztxcrzlomgeqfdh.supabase.co';
 
 const supabaseKey: string =
   (extra.supabaseKey as string | undefined) ||
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFuYmxreGZyYnZnZmlla2pxa3lyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0NDUxNjcsImV4cCI6MjA5MjAyMTE2N30.BWqlTxS-JCKu_4d_g8AwUWtQ653MnPq2HXf0KAd0j1U';
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRhY29renR4Y3J6bG9tZ2VxZmRoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcyMjAyNTksImV4cCI6MjA5Mjc5NjI1OX0.6bOd5FbG78LKmHFFDQhsEoSoc7wlk__Wn_as2Q0sHe0';
 
 export const supabase = createClient(supabaseUrl, supabaseKey, {
   auth: {

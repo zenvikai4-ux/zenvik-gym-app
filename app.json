@@ -30,8 +30,8 @@
       "expo-font"
     ],
     "extra": {
-      "supabaseUrl": "https://qnblkxfrbvgfiekjqkyr.supabase.co",
-      "supabaseKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFuYmxreGZyYnZnZmlla2pxa3lyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0NDUxNjcsImV4cCI6MjA5MjAyMTE2N30.BWqlTxS-JCKu_4d_g8AwUWtQ653MnPq2HXf0KAd0j1U",
+      "supabaseUrl": "https://tacokztxcrzlomgeqfdh.supabase.co",
+      "supabaseKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRhY29renR4Y3J6bG9tZ2VxZmRoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcyMjAyNTksImV4cCI6MjA5Mjc5NjI1OX0.6bOd5FbG78LKmHFFDQhsEoSoc7wlk__Wn_as2Q0sHe0",
       "gymServerUrl": "https://zenvik-gym-server-production.up.railway.app",
       "zenvikaiBackendUrl": "https://zenvik-root-server-production.up.railway.app",
       "eas": {
