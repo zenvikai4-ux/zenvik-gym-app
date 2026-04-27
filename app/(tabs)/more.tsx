@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, KeyboardAvoidingView, Platform, Pressable, Switch,
-  ActivityIndicator, TextInput, Modal, Platform, Alert, Image,
+  ActivityIndicator, TextInput, Modal, Alert, Image,
 } from 'react-native';
 
 import { Ionicons } from '@expo/vector-icons';
