@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "FitZen",
+    "slug": "fitzen",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "gymapp",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/images/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0D0F14"
+    },
+    "android": {
+      "backgroundColor": "#0D0F14",
+      "package": "com.gymapp.mobile",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/icon.png",
+        "backgroundColor": "#0D0F14"
+      }
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.gymapp.mobile"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font"
+    ],
+    "extra": {
+      "supabaseUrl": "https://tacokztxcrzlomgeqfdh.supabase.co",
+      "supabaseKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRhY29renR4Y3J6bG9tZ2VxZmRoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcyMjAyNTksImV4cCI6MjA5Mjc5NjI1OX0.6bOd5FbG78LKmHFFDQhsEoSoc7wlk__Wn_as2Q0sHe0",
+      "gymServerUrl": "https://zenvik-gym-server-production.up.railway.app",
+      "zenvikaiBackendUrl": "https://zenvik-root-server-production.up.railway.app",
+      "eas": {
+        "projectId": "0beac2a5-6f44-4579-aef8-5afb58b27b35"
+      }
+    }
+  }
+}
