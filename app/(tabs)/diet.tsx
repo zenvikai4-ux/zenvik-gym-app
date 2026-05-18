@@ -164,7 +164,7 @@ export default function DietScreen() {
           </Text>
         </View>
       ) : realProfileId ? (
-        <DietPlanSection profileId={realProfileId} gymId={user?.gym_id ?? null} tabBarHeight={tabBarHeight} />
+        <DietPlanSection profileId={realProfileId} tabBarHeight={tabBarHeight} />
       ) : (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator color={Colors.primary} />
@@ -174,7 +174,7 @@ export default function DietScreen() {
   );
 }
 
-function DietPlanSection({ profileId, gymId, tabBarHeight }: { profileId: string; gymId: string | null; tabBarHeight: number }) {
+function DietPlanSection({ profileId, tabBarHeight }: { profileId: string; tabBarHeight: number }) {
   const { data: plans = [] } = useDietPlans(profileId);
   const [activeDay, setActiveDay] = useState(
     new Date().getDay() === 0 ? 6 : new Date().getDay() - 1
@@ -190,7 +190,7 @@ function DietPlanSection({ profileId, gymId, tabBarHeight }: { profileId: string
   const handleSaveSlot = (slot: string) => {
     if (!editText.trim()) return;
     upsertPlan.mutate(
-      { client_profile_id: profileId, gym_id: gymId, day_of_week: activeDay, meal_slot: slot, items: editText.trim() },
+      { client_profile_id: profileId, day_of_week: activeDay, meal_slot: slot, items: editText.trim() },
       {
         onSuccess: () => {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);

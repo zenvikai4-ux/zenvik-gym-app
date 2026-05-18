@@ -97,17 +97,6 @@ export function useInsertLead() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (lead: any) => {
-      // Server-side duplicate check: if a lead with same phone+gym already exists, return it
-      if (lead.phone && lead.gym_id) {
-        const normalizedPhone = lead.phone.replace(/\s+/g, '');
-        const { data: existing } = await supabase
-          .from('leads')
-          .select('id')
-          .eq('gym_id', lead.gym_id)
-          .ilike('phone', normalizedPhone)
-          .maybeSingle();
-        if (existing) throw new Error('A lead with this phone number already exists.');
-      }
       const { data, error } = await supabase.from('leads').insert(lead).select().single();
       if (error) throw error;
       return data;
@@ -454,8 +443,8 @@ export function useUpsertDietPlan() {
 
       if (selectError) throw selectError;
 
-      let result;
       if (existing?.id) {
+        // Update
         const { data, error } = await supabase
           .from('diet_plans')
           .update({ items: plan.items })
@@ -463,31 +452,17 @@ export function useUpsertDietPlan() {
           .select()
           .single();
         if (error) throw error;
-        result = data;
+        return data;
       } else {
+        // Insert
         const { data, error } = await supabase
           .from('diet_plans')
           .insert(plan)
           .select()
           .single();
         if (error) throw error;
-        result = data;
+        return data;
       }
-
-      // Trigger WhatsApp notification to member via gym server
-      if (plan.gym_id && plan.client_profile_id) {
-        const GYM_SERVER = process.env.EXPO_PUBLIC_GYM_SERVER_URL || 'https://gymapp-server-production.up.railway.app';
-        fetch(`${GYM_SERVER}/diet/assigned`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            client_profile_id: plan.client_profile_id,
-            gym_id: plan.gym_id,
-          }),
-        }).catch(e => console.warn('Diet WA trigger failed:', e.message));
-      }
-
-      return result;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['diet_plans'] }),
     onError: (error: any) => {

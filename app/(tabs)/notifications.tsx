@@ -29,17 +29,6 @@ const TYPE_ICONS: Record<string, string> = {
   fee_reminder: 'card-outline',
   diet: 'nutrition-outline',
   general: 'information-circle-outline',
-  lead: 'person-add-outline',
-  handoff: 'alert-circle-outline',
-};
-
-const TYPE_COLORS: Record<string, string> = {
-  broadcast: Colors.primary,
-  fee_reminder: Colors.warning,
-  diet: '#22C55E',
-  general: Colors.info,
-  lead: Colors.purple,
-  handoff: '#E1306C',
 };
 
 export default function NotificationsScreen() {
@@ -79,12 +68,12 @@ export default function NotificationsScreen() {
           </View>
         }
         renderItem={({ item }: { item: any }) => (
-          <View style={[styles.card, item.type === 'handoff' && { borderColor: '#E1306C50', borderWidth: 1 }]}>
-            <View style={[styles.iconBox, { backgroundColor: (TYPE_COLORS[item.type] || Colors.primary) + '20' }]}>
+          <View style={styles.card}>
+            <View style={styles.iconBox}>
               <Ionicons
                 name={(TYPE_ICONS[item.type] || 'notifications-outline') as any}
                 size={20}
-                color={TYPE_COLORS[item.type] || Colors.primary}
+                color={Colors.primary}
               />
             </View>
             <View style={styles.cardBody}>

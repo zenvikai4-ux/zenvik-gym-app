@@ -281,18 +281,6 @@ export default function LeadsScreen() {
   const handleAdd = () => {
     setFormError('');
     if (!form.name || !form.phone) { setFormError('Name and phone are required'); return; }
-
-    // Duplicate check: reject if phone already exists as a lead in this gym
-    const normalizedPhone = form.phone.replace(/\s+/g, '').replace(/^\+91/, '');
-    const duplicate = leads.find((l: any) => {
-      const lPhone = (l.phone || '').replace(/\s+/g, '').replace(/^\+91/, '');
-      return lPhone === normalizedPhone;
-    });
-    if (duplicate) {
-      setFormError('A lead with this phone number already exists in your pipeline.');
-      return;
-    }
-
     insertLead.mutate({
       name: form.name, phone: form.phone,
       source: form.source, goal: form.goal,
