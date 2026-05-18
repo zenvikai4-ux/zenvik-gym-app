@@ -97,6 +97,17 @@ export function useInsertLead() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (lead: any) => {
+      // Server-side duplicate check: if a lead with same phone+gym already exists, return it
+      if (lead.phone && lead.gym_id) {
+        const normalizedPhone = lead.phone.replace(/\s+/g, '');
+        const { data: existing } = await supabase
+          .from('leads')
+          .select('id')
+          .eq('gym_id', lead.gym_id)
+          .ilike('phone', normalizedPhone)
+          .maybeSingle();
+        if (existing) throw new Error('A lead with this phone number already exists.');
+      }
       const { data, error } = await supabase.from('leads').insert(lead).select().single();
       if (error) throw error;
       return data;
@@ -125,6 +136,89 @@ export function useDeleteLead() {
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['leads'] }),
+  });
+}
+
+// Lead conversations (AI chat history)
+export function useLeadConversations(leadId?: string | null) {
+  return useQuery({
+    queryKey: ['lead_conversations', leadId],
+    enabled: !!leadId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('lead_conversations')
+        .select('*')
+        .eq('lead_id', leadId!)
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+}
+
+// Gym knowledge base
+export function useGymKnowledge(gymId?: string | null) {
+  return useQuery({
+    queryKey: ['gym_knowledge', gymId],
+    enabled: !!gymId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('gym_knowledge_base')
+        .select('*')
+        .eq('gym_id', gymId!)
+        .single();
+      if (error && error.code !== 'PGRST116') throw error;
+      return data ?? null;
+    },
+  });
+}
+
+export function useUpsertGymKnowledge() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (knowledge: any) => {
+      const { data, error } = await supabase
+        .from('gym_knowledge_base')
+        .upsert(knowledge, { onConflict: 'gym_id' })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ['gym_knowledge', vars.gym_id] }),
+  });
+}
+
+// Gym automation config (per-module settings: cron times, instagram id etc.)
+export function useGymAutomationConfig(gymId?: string | null) {
+  return useQuery({
+    queryKey: ['gym_automation_config', gymId],
+    enabled: !!gymId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('gym_automation_config')
+        .select('*')
+        .eq('gym_id', gymId!)
+        .single();
+      if (error && error.code !== 'PGRST116') throw error;
+      return data ?? null;
+    },
+  });
+}
+
+export function useUpsertGymAutomationConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (config: any) => {
+      const { data, error } = await supabase
+        .from('gym_automation_config')
+        .upsert(config, { onConflict: 'gym_id' })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ['gym_automation_config', vars.gym_id] }),
   });
 }
 
@@ -360,8 +454,8 @@ export function useUpsertDietPlan() {
 
       if (selectError) throw selectError;
 
+      let result;
       if (existing?.id) {
-        // Update
         const { data, error } = await supabase
           .from('diet_plans')
           .update({ items: plan.items })
@@ -369,17 +463,31 @@ export function useUpsertDietPlan() {
           .select()
           .single();
         if (error) throw error;
-        return data;
+        result = data;
       } else {
-        // Insert
         const { data, error } = await supabase
           .from('diet_plans')
           .insert(plan)
           .select()
           .single();
         if (error) throw error;
-        return data;
+        result = data;
       }
+
+      // Trigger WhatsApp notification to member via gym server
+      if (plan.gym_id && plan.client_profile_id) {
+        const GYM_SERVER = process.env.EXPO_PUBLIC_GYM_SERVER_URL || 'https://gymapp-server-production.up.railway.app';
+        fetch(`${GYM_SERVER}/diet/assigned`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            client_profile_id: plan.client_profile_id,
+            gym_id: plan.gym_id,
+          }),
+        }).catch(e => console.warn('Diet WA trigger failed:', e.message));
+      }
+
+      return result;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['diet_plans'] }),
     onError: (error: any) => {

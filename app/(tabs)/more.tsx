@@ -21,7 +21,9 @@ import {
   useBroadcastWhatsApp, useBroadcastInApp, useInsertQuery,
   useInsertModule, useUpdateModule, useDeleteModule,
   useAutoInvoice, useGymModulePrice,
-  useLatestInvoice, useUpsertGymSubscription,
+  useLatestInvoice, useUpsertGymSubscription, useInsertNotification,
+  useGymKnowledge, useUpsertGymKnowledge,
+  useGymAutomationConfig, useUpsertGymAutomationConfig,
 } from '@/lib/hooks';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ConfirmModal } from '@/components/ConfirmModal';
@@ -75,6 +77,8 @@ export default function MoreScreen() {
       { key: 'broadcast_whatsapp', label: 'WhatsApp Broadcast', icon: 'logo-whatsapp', color: '#25D366' },
       { key: 'broadcast_inapp', label: 'In-App Broadcast', icon: 'notifications-outline', color: Colors.info },
       { key: 'my_modules', label: 'My Modules', icon: 'grid-outline', color: Colors.purple },
+      { key: 'gym_knowledge', label: 'Gym Knowledge Base', icon: 'book-outline', color: Colors.warning },
+      { key: 'automation_config', label: 'Automation Settings', icon: 'flash-outline', color: '#E1306C' },
     );
   }
 
@@ -183,6 +187,12 @@ export default function MoreScreen() {
       </Modal>
       <Modal visible={activeSection === 'my_modules'} animationType="slide" onRequestClose={() => setActiveSection(null)}>
         <MyModulesSection onClose={() => setActiveSection(null)} />
+      </Modal>
+      <Modal visible={activeSection === 'gym_knowledge'} animationType="slide" onRequestClose={() => setActiveSection(null)}>
+        <GymKnowledgeSection onClose={() => setActiveSection(null)} />
+      </Modal>
+      <Modal visible={activeSection === 'automation_config'} animationType="slide" onRequestClose={() => setActiveSection(null)}>
+        <AutomationConfigSection onClose={() => setActiveSection(null)} />
       </Modal>
 
       {/* Custom sign-out confirmation (replaces Alert.alert which is blocked in iframes on web) */}
@@ -1254,10 +1264,220 @@ const INV_STATUS_MAP: Record<string, { label: string; color: string }> = {
 function BillingSection({ onClose }: { onClose: () => void }) {
   const insets = useSafeAreaInsets();
   const { data: gyms = [] } = useGyms();
-  const { data: invoices = [], isLoading, isError: invoicesError, error: invoicesErr } = useInvoices();
+  const { data: invoices = [], isLoading, isError: invoicesError } = useInvoices();
   const updateInvoice = useUpdateInvoice();
   const autoInvoice = useAutoInvoice();
   const upsertSubscription = useUpsertGymSubscription();
+  const insertNotification = useInsertNotification();
+
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [filterGym, setFilterGym] = useState('');
+  const [generating, setGenerating] = useState<string | null>(null);
+  const [sendingInvoiceId, setSendingInvoiceId] = useState<string | null>(null);
+
+  const totalPaid = invoices.filter((i: any) => i.status === 'paid').reduce((s: number, i: any) => s + (i.amount ?? 0), 0);
+  const totalPending = invoices.filter((i: any) => i.status === 'pending').reduce((s: number, i: any) => s + (i.amount ?? 0), 0);
+  const overdueCount = invoices.filter((i: any) => i.status === 'overdue').length;
+
+  const filtered = invoices
+    .filter((i: any) => statusFilter === 'all' || i.status === statusFilter)
+    .filter((i: any) => !filterGym || i.gym_id === filterGym);
+
+  const togglePaid = (inv: any) => {
+    const newStatus = inv.status === 'paid' ? 'pending' : 'paid';
+    const updates: any = { status: newStatus };
+    if (newStatus === 'paid') updates.paid_at = new Date().toISOString();
+    else updates.paid_at = null;
+    updateInvoice.mutate({ id: inv.id, ...updates }, {
+      onSuccess: () => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success),
+    });
+  };
+
+  // Send invoice as in-app notification to gym owner
+  const handleSendInvoice = (inv: any) => {
+    const gymName = gyms.find((g: any) => g.id === inv.gym_id)?.name ?? 'Your Gym';
+    const dueDate = inv.due_date ? new Date(inv.due_date).toLocaleDateString('en-IN') : 'As soon as possible';
+    setSendingInvoiceId(inv.id);
+    insertNotification.mutate({
+      gym_id: inv.gym_id,
+      title: `🧾 Invoice — ₹${(inv.amount ?? 0).toLocaleString('en-IN')}`,
+      body: `Your monthly subscription invoice for ${gymName} is ₹${(inv.amount ?? 0).toLocaleString('en-IN')}. Due by ${dueDate}. ${inv.description || 'Monthly platform subscription'}. Please pay to avoid service interruption.`,
+      type: 'fee_reminder',
+      is_read: false,
+    }, {
+      onSuccess: () => {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        Alert.alert('Invoice Sent', `Invoice notification sent to ${gymName} owner in-app.`);
+        setSendingInvoiceId(null);
+      },
+      onError: (e: any) => { Alert.alert('Error', e.message); setSendingInvoiceId(null); },
+    });
+  };
+
+  const handleAutoGenerate = async (gym: any) => {
+    setGenerating(gym.id);
+    const { data: gymMods } = await supabase
+      .from('gym_modules')
+      .select('is_enabled, module:modules(price)')
+      .eq('gym_id', gym.id)
+      .eq('is_enabled', true);
+
+    // Modules + management only (no base fee)
+    const MGMT = 99;
+    const modTotal = (gymMods ?? []).reduce((sum: number, gm: any) => sum + (gm.module?.price ?? 0), 0);
+    const total = modTotal + MGMT;
+
+    const today = new Date().toISOString().split('T')[0];
+    const nextMonth = new Date();
+    nextMonth.setMonth(nextMonth.getMonth() + 1);
+    const endDate = nextMonth.toISOString().split('T')[0];
+
+    autoInvoice.mutate(
+      { gym_id: gym.id, amount: total, description: `Monthly subscription — Modules ₹${modTotal} + Platform ₹${MGMT}` },
+      {
+        onSuccess: () => {
+          upsertSubscription.mutate({ gym_id: gym.id, plan: 'modules', amount: total, start_date: today, end_date: endDate });
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          Alert.alert('Invoice Created', `₹${total.toLocaleString('en-IN')} invoice for ${gym.name}\n\nBreakdown:\nModules: ₹${modTotal}\nPlatform: ₹${MGMT}\n\nPeriod: ${today} → ${endDate}`);
+          setGenerating(null);
+        },
+        onError: (e: any) => { Alert.alert('Error', e.message); setGenerating(null); },
+      }
+    );
+  };
+
+  return (
+    <View style={{ flex: 1, backgroundColor: Colors.background }}>
+      <SectionHeader title="Billing" onClose={onClose} />
+      <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: insets.bottom + 20 }}>
+
+        {invoicesError && (
+          <View style={{ backgroundColor: Colors.danger + '15', borderRadius: 12, padding: 16, borderWidth: 1, borderColor: Colors.danger + '40', gap: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Ionicons name="warning-outline" size={20} color={Colors.danger} />
+              <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 15, color: Colors.danger }}>Billing Setup Required</Text>
+            </View>
+            <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary, lineHeight: 20 }}>
+              The invoices table is missing. Please run the SQL migration in your Supabase dashboard to enable billing.
+            </Text>
+          </View>
+        )}
+
+        {/* Summary cards */}
+        <View style={analytics.grid}>
+          {[
+            { label: 'Total Paid', value: `₹${totalPaid.toLocaleString('en-IN')}`, color: Colors.primary },
+            { label: 'Pending', value: `₹${totalPending.toLocaleString('en-IN')}`, color: Colors.warning },
+            { label: 'Overdue', value: overdueCount, color: Colors.danger },
+            { label: 'Total Invoices', value: invoices.length, color: Colors.info },
+          ].map(item => (
+            <View key={item.label} style={[analytics.card, { borderTopColor: item.color }]}>
+              <Text style={analytics.cardLabel}>{item.label}</Text>
+              <Text style={[analytics.cardValue, { color: item.color, fontSize: typeof item.value === 'string' ? 16 : 24 }]}>{item.value}</Text>
+            </View>
+          ))}
+        </View>
+
+        {/* Generate invoices per gym */}
+        <View style={section.card}>
+          <Text style={analytics.sectionTitle}>Generate Invoice</Text>
+          <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.textMuted, marginBottom: 10 }}>
+            Auto-calculates base (₹250) + enabled modules + platform fee (₹99).
+          </Text>
+          {gyms.map((gym: any) => (
+            <View key={gym.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: Colors.border }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 14, color: Colors.text }}>{gym.name}</Text>
+                <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>
+                  {new Date(gym.created_at).toLocaleDateString('en-IN')}
+                </Text>
+              </View>
+              <Pressable
+                style={{ flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: Colors.primaryMuted, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7, borderWidth: 1, borderColor: Colors.primary + '40', opacity: generating === gym.id ? 0.6 : 1 }}
+                onPress={() => handleAutoGenerate(gym)}
+                disabled={generating === gym.id}
+              >
+                {generating === gym.id
+                  ? <ActivityIndicator size="small" color={Colors.primary} />
+                  : <Ionicons name="receipt-outline" size={14} color={Colors.primary} />}
+                <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 12, color: Colors.primary }}>Generate</Text>
+              </Pressable>
+            </View>
+          ))}
+          {gyms.length === 0 && <Text style={section.empty}>No gyms yet</Text>}
+        </View>
+
+        {/* Filters */}
+        <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+          {['all', 'paid', 'pending', 'overdue'].map(s => (
+            <Pressable
+              key={s}
+              style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1,
+                backgroundColor: statusFilter === s ? Colors.info + '22' : Colors.secondary,
+                borderColor: statusFilter === s ? Colors.info : Colors.border }}
+              onPress={() => setStatusFilter(s)}
+            >
+              <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 12, color: statusFilter === s ? Colors.info : Colors.textSecondary, textTransform: 'capitalize' }}>{s}</Text>
+            </Pressable>
+          ))}
+        </View>
+
+        <GymPicker gyms={[{ id: '', name: 'All Gyms' }, ...gyms]} value={filterGym} onChange={setFilterGym} />
+
+        {isLoading && <ActivityIndicator color={Colors.info} />}
+
+        {filtered.map((inv: any) => {
+          const gymName = inv.gym?.name ?? gyms.find((g: any) => g.id === inv.gym_id)?.name ?? 'Unknown Gym';
+          const isPaid = inv.status === 'paid';
+          const isSending = sendingInvoiceId === inv.id;
+          return (
+            <View key={inv.id} style={section.card}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <Ionicons name="card-outline" size={18} color={INV_STATUS_MAP[inv.status ?? 'pending']?.color ?? Colors.info} />
+                <Text style={[section.name, { flex: 1 }]} numberOfLines={1}>{gymName}</Text>
+                <StatusBadge status={inv.status ?? 'pending'} map={INV_STATUS_MAP} />
+              </View>
+              {!!inv.description && <Text style={section.sub}>{inv.description}</Text>}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, gap: 8 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 16, color: Colors.text }}>₹{(inv.amount ?? 0).toLocaleString('en-IN')}</Text>
+                  <Text style={section.sub}>Due: {fmtDate(inv.due_date)}{isPaid && inv.paid_at ? ` · Paid: ${fmtDate(inv.paid_at)}` : ''}</Text>
+                </View>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  {/* Send in-app */}
+                  {!isPaid && (
+                    <Pressable
+                      style={{ flexDirection: 'row', gap: 5, alignItems: 'center', paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, borderWidth: 1, backgroundColor: Colors.warning + '15', borderColor: Colors.warning + '50', opacity: isSending ? 0.6 : 1 }}
+                      onPress={() => handleSendInvoice(inv)}
+                      disabled={isSending}
+                    >
+                      {isSending
+                        ? <ActivityIndicator size="small" color={Colors.warning} />
+                        : <Ionicons name="send-outline" size={14} color={Colors.warning} />}
+                      <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 12, color: Colors.warning }}>Send</Text>
+                    </Pressable>
+                  )}
+                  {/* Mark paid */}
+                  <Pressable
+                    style={{ flexDirection: 'row', gap: 5, alignItems: 'center', paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, borderWidth: 1,
+                      backgroundColor: isPaid ? Colors.secondary : Colors.primaryMuted,
+                      borderColor: isPaid ? Colors.border : Colors.primary }}
+                    onPress={() => togglePaid(inv)}
+                    disabled={updateInvoice.isPending}
+                  >
+                    <Ionicons name={isPaid ? 'arrow-undo-outline' : 'checkmark-circle-outline'} size={14} color={isPaid ? Colors.textMuted : Colors.primary} />
+                    <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 12, color: isPaid ? Colors.textMuted : Colors.primary }}>
+                      {isPaid ? 'Undo' : 'Mark Paid'}
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+          );
+        })}
+        {filtered.length === 0 && !isLoading && <Text style={section.empty}>No invoices found</Text>}
+      </ScrollView>
+    </View>
 
   const [statusFilter, setStatusFilter] = useState('all');
   const [filterGym, setFilterGym] = useState('');
@@ -1750,17 +1970,161 @@ function MyModulesSection({ onClose }: { onClose: () => void }) {
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const { data: gymModules = [], isLoading } = useGymModules(user?.gym_id || null);
+  const upsertModule = useUpsertGymModule();
+  const { data: allModules = [] } = useModules();
   const { data: latestInvoice } = useLatestInvoice(user?.gym_id || null);
   const { data: subscription } = useGymSubscriptionByGym(user?.gym_id || null);
 
-  const enabledModules = gymModules.filter((gm: any) => gm.is_enabled);
-
-  const invoiceAmount = latestInvoice?.amount ?? 0;
   const startDate = subscription?.start_date ?? latestInvoice?.created_at?.split('T')[0] ?? null;
   const endDate = subscription?.end_date ?? latestInvoice?.due_date ?? null;
   const daysLeft = endDate ? Math.ceil((new Date(endDate).getTime() - Date.now()) / 86400000) : null;
   const isExpiring = daysLeft !== null && daysLeft <= 30 && daysLeft > 0;
   const isExpired = daysLeft !== null && daysLeft <= 0;
+
+  // Fixed 3 modules
+  const FIXED_MODULES = [
+    {
+      key: 'client_login',
+      name: 'Client Login & Progress',
+      description: 'Members can log in, track height/weight, and view their fitness journey progress.',
+      icon: 'person-circle-outline',
+      color: Colors.info,
+      price: 50,
+    },
+    {
+      key: 'whatsapp_leads',
+      name: 'WhatsApp Lead Management',
+      description: 'Automated lead pipeline — AI chats with new leads, tracks pipeline stages, notifies owner on handoff.',
+      icon: 'logo-whatsapp',
+      color: '#25D366',
+      price: 150,
+    },
+    {
+      key: 'trainer_diet',
+      name: 'Trainer Login & Diet Charts',
+      description: 'Trainers can log in, assign diet charts, and send daily diet messages to members every morning.',
+      icon: 'nutrition-outline',
+      color: Colors.warning,
+      price: 200,
+    },
+  ];
+
+  const BASE_PRICE = 0;
+  const MGMT_FEE = 99;
+
+  // Map enabled modules from DB
+  const enabledKeys = new Set(
+    gymModules.filter((gm: any) => gm.is_enabled).map((gm: any) => gm.module?.name?.toLowerCase().replace(/\s+/g, '_'))
+  );
+
+  const moduleTotal = FIXED_MODULES.filter(m => enabledKeys.has(m.key)).reduce((s, m) => s + m.price, 0);
+  const totalMonthly = BASE_PRICE + moduleTotal + MGMT_FEE;
+
+  const handleToggle = (moduleName: string, currentEnabled: boolean) => {
+    const mod = allModules.find((m: any) => m.name.toLowerCase().replace(/\s+/g, '_') === moduleName);
+    if (!mod || !user?.gym_id) return;
+    upsertModule.mutate({ gym_id: user.gym_id, module_id: mod.id, is_enabled: !currentEnabled });
+  };
+
+  return (
+    <View style={{ flex: 1, backgroundColor: Colors.background }}>
+      <SectionHeader title="My Modules" onClose={onClose} />
+      <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: insets.bottom + 20 }}>
+
+        {/* Subscription warning */}
+        {(isExpiring || isExpired) && (
+          <View style={{ flexDirection: "row", gap: 10, backgroundColor: Colors.warningMuted, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: Colors.warning + "55" }}>
+            <Ionicons name="warning-outline" size={18} color={Colors.warning} />
+            <Text style={{ fontFamily: "Inter_400Regular", fontSize: 13, color: Colors.warning, flex: 1, lineHeight: 18 }}>
+              {isExpired ? "Your subscription has expired. Contact the platform admin to renew." : `Subscription expires in ${daysLeft} day${daysLeft === 1 ? "" : "s"}.`}
+            </Text>
+          </View>
+        )}
+
+        {/* Monthly total card */}
+        <View style={{ backgroundColor: Colors.primaryMuted, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: Colors.primary + "40" }}>
+          <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 12, color: Colors.textSecondary, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Monthly Subscription</Text>
+          <Text style={{ fontFamily: "Inter_700Bold", fontSize: 32, color: Colors.primary }}>
+            ₹{totalMonthly.toLocaleString("en-IN")}
+            <Text style={{ fontFamily: "Inter_400Regular", fontSize: 14, color: Colors.textSecondary }}>/month</Text>
+          </Text>
+          <View style={{ gap: 4, marginTop: 8 }}>
+            {FIXED_MODULES.filter(m => enabledKeys.has(m.key)).map(m => (
+              <View key={m.key} style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                <Text style={{ fontFamily: "Inter_400Regular", fontSize: 12, color: Colors.textMuted }}>{m.name}</Text>
+                <Text style={{ fontFamily: "Inter_500Medium", fontSize: 12, color: Colors.text }}>₹{m.price}</Text>
+              </View>
+            ))}
+            <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+              <Text style={{ fontFamily: "Inter_400Regular", fontSize: 12, color: Colors.textMuted }}>Platform Management</Text>
+              <Text style={{ fontFamily: "Inter_500Medium", fontSize: 12, color: Colors.text }}>₹{MGMT_FEE}</Text>
+            </View>
+            <Text style={{ fontFamily: "Inter_400Regular", fontSize: 11, color: Colors.textMuted, marginTop: 4 }}>
+              * WhatsApp (Meta) charges billed separately to your card
+            </Text>
+          </View>
+          {startDate && (
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+              <Text style={{ fontFamily: "Inter_500Medium", fontSize: 12, color: Colors.textMuted, width: 60 }}>Renews</Text>
+              <Text style={{ fontFamily: "Inter_400Regular", fontSize: 12, color: isExpiring || isExpired ? Colors.warning : Colors.text }}>
+                {endDate ?? "—"}{daysLeft !== null && daysLeft > 0 ? ` (${daysLeft}d left)` : isExpired ? " (Expired)" : ""}
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {/* 3 fixed modules */}
+        <Text style={{ fontFamily: "Inter_700Bold", fontSize: 15, color: Colors.text, marginTop: 4 }}>Add-on Modules</Text>
+
+        {isLoading ? <ActivityIndicator color={Colors.primary} /> : (
+          FIXED_MODULES.map(mod => {
+            const isEnabled = enabledKeys.has(mod.key);
+            return (
+              <View key={mod.key} style={{
+                backgroundColor: Colors.card, borderRadius: 14, padding: 14,
+                borderWidth: 1, borderColor: isEnabled ? mod.color + '50' : Colors.border,
+                borderLeftWidth: 3, borderLeftColor: isEnabled ? mod.color : Colors.border,
+              }}>
+                <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 12 }}>
+                  <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: mod.color + "20", alignItems: "center", justifyContent: "center" }}>
+                    <Ionicons name={mod.icon as any} size={20} color={mod.color} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                      <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 14, color: Colors.text }}>{mod.name}</Text>
+                      <Text style={{ fontFamily: "Inter_700Bold", fontSize: 13, color: mod.color }}>₹{mod.price}/mo</Text>
+                    </View>
+                    <Text style={{ fontFamily: "Inter_400Regular", fontSize: 12, color: Colors.textMuted, marginTop: 4, lineHeight: 17 }}>{mod.description}</Text>
+                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 10 }}>
+                      <View style={[{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }, isEnabled ? { backgroundColor: mod.color + "20" } : { backgroundColor: Colors.secondary }]}>
+                        <Text style={{ fontFamily: "Inter_500Medium", fontSize: 11, color: isEnabled ? mod.color : Colors.textMuted }}>
+                          {isEnabled ? "Active" : "Inactive"}
+                        </Text>
+                      </View>
+                      <Switch
+                        value={isEnabled}
+                        onValueChange={() => handleToggle(mod.key, isEnabled)}
+                        trackColor={{ true: mod.color }}
+                      />
+                    </View>
+                  </View>
+                </View>
+              </View>
+            );
+          })
+        )}
+
+        <View style={{ backgroundColor: Colors.secondary, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: Colors.border }}>
+          <Text style={{ fontFamily: "Inter_400Regular", fontSize: 12, color: Colors.textMuted, lineHeight: 18 }}>
+            💡 Base includes: Admin login, member management, attendance, payments tracking, expiry reminders, and dashboard analytics.{"\n\n"}
+            Add-on modules expand functionality for your gym's specific needs.
+          </Text>
+        </View>
+
+      </ScrollView>
+    </View>
+  );
+}
 
   return (
     <View style={{ flex: 1, backgroundColor: Colors.background }}>
@@ -1862,6 +2226,15 @@ function BroadcastWhatsAppModal({ onClose }: { onClose: () => void }) {
   const [sent, setSent] = useState(false);
   const [sendError, setSendError] = useState('');
 
+  const handleClose = () => {
+    setMessage('');
+    setRecipient('both');
+    setSent(false);
+    setSendError('');
+    broadcast.reset();
+    onClose();
+  };
+
   const handleSend = () => {
     if (!message.trim() || !user?.gym_id) return;
     setSendError('');
@@ -1889,7 +2262,7 @@ function BroadcastWhatsAppModal({ onClose }: { onClose: () => void }) {
           <Text style={{ color: Colors.textSecondary, fontFamily: 'Inter_400Regular', textAlign: 'center', marginTop: 8, marginBottom: 20 }}>
             Your message has been queued. WhatsApp messages will be sent to all {recipient === 'both' ? 'members & trainers' : recipient === 'clients' ? 'members' : 'trainers'} shortly.
           </Text>
-          <Pressable style={[broadcastStyles.sendBtn, { backgroundColor: '#25D366' }]} onPress={onClose}>
+          <Pressable style={[broadcastStyles.sendBtn, { backgroundColor: '#25D366' }]} onPress={handleClose}>
             <Text style={[broadcastStyles.sendBtnText, { color: '#fff' }]}>Done</Text>
           </Pressable>
         </View>
@@ -1899,14 +2272,14 @@ function BroadcastWhatsAppModal({ onClose }: { onClose: () => void }) {
 
   return (
     <KeyboardAvoidingView style={[broadcastStyles.overlay]} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <Pressable style={{ flex: 1 }} onPress={onClose} />
+      <Pressable style={{ flex: 1 }} onPress={handleClose} />
       <View style={[broadcastStyles.sheet, { paddingBottom: insets.bottom + 20 }]}>
         <View style={broadcastStyles.header}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Ionicons name="logo-whatsapp" size={22} color="#25D366" />
             <Text style={broadcastStyles.title}>WhatsApp Broadcast</Text>
           </View>
-          <Pressable onPress={onClose}>
+          <Pressable onPress={handleClose}>
             <Ionicons name="close" size={22} color={Colors.text} />
           </Pressable>
         </View>
@@ -1999,6 +2372,14 @@ function BroadcastInAppModal({ onClose }: { onClose: () => void }) {
   const [recipient, setRecipient] = useState<'clients' | 'trainers' | 'both'>('both');
   const [sent, setSent] = useState(false);
 
+  const handleClose = () => {
+    setMessage('');
+    setRecipient('both');
+    setSent(false);
+    broadcast.reset();
+    onClose();
+  };
+
   const handleSend = () => {
     if (!message.trim() || !user?.gym_id) return;
     broadcast.mutate(
@@ -2025,7 +2406,7 @@ function BroadcastInAppModal({ onClose }: { onClose: () => void }) {
           <Text style={{ color: Colors.textSecondary, fontFamily: 'Inter_400Regular', textAlign: 'center', marginTop: 8, marginBottom: 20 }}>
             In-app notification delivered to all {recipient === 'both' ? 'members & trainers' : recipient === 'clients' ? 'members' : 'trainers'} successfully.
           </Text>
-          <Pressable style={[broadcastStyles.sendBtn, { backgroundColor: Colors.info }]} onPress={onClose}>
+          <Pressable style={[broadcastStyles.sendBtn, { backgroundColor: Colors.info }]} onPress={handleClose}>
             <Text style={[broadcastStyles.sendBtnText, { color: '#fff' }]}>Done</Text>
           </Pressable>
         </View>
@@ -2035,14 +2416,14 @@ function BroadcastInAppModal({ onClose }: { onClose: () => void }) {
 
   return (
     <KeyboardAvoidingView style={[broadcastStyles.overlay]} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <Pressable style={{ flex: 1 }} onPress={onClose} />
+      <Pressable style={{ flex: 1 }} onPress={handleClose} />
       <View style={[broadcastStyles.sheet, { paddingBottom: insets.bottom + 20 }]}>
         <View style={broadcastStyles.header}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Ionicons name="notifications-outline" size={22} color={Colors.info} />
             <Text style={broadcastStyles.title}>In-App Broadcast</Text>
           </View>
-          <Pressable onPress={onClose}>
+          <Pressable onPress={handleClose}>
             <Ionicons name="close" size={22} color={Colors.text} />
           </Pressable>
         </View>
@@ -2405,4 +2786,453 @@ const planSt = StyleSheet.create({
   planLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 13, marginBottom: 4 },
   planPrice: { fontFamily: 'Inter_700Bold', fontSize: 15, color: Colors.text },
   planCount: { fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted, marginTop: 2 },
+});
+
+// ── Gym Knowledge Base Section ─────────────────────────────────────────────
+function GymKnowledgeSection({ onClose }: { onClose: () => void }) {
+  const insets = useSafeAreaInsets();
+  const { user } = useAuth();
+  const { data: knowledge, isLoading } = useGymKnowledge(user?.gym_id);
+  const upsert = useUpsertGymKnowledge();
+
+  const [form, setForm] = useState({
+    gym_name: '', tagline: '', description: '',
+    location_address: '', location_maps_url: '',
+    phone: '', email: '', website_url: '',
+    weekday_open: '6:00 AM', weekday_close: '10:00 PM',
+    weekend_open: '7:00 AM', weekend_close: '8:00 PM',
+    is_open_sundays: true,
+    current_offers: '', trainer_info: '', instagram_id: '', additional_info: '',
+  });
+  const [saved, setSaved] = useState(false);
+
+  // Facilities: simple tag list
+  const [facilities, setFacilities] = useState<string[]>([]);
+  const [facilityInput, setFacilityInput] = useState('');
+
+  const addFacility = () => {
+    const v = facilityInput.trim();
+    if (v && !facilities.includes(v)) setFacilities(p => [...p, v]);
+    setFacilityInput('');
+  };
+  const removeFacility = (i: number) => setFacilities(p => p.filter((_, idx) => idx !== i));
+
+  // Membership Plans: structured rows
+  type Plan = { name: string; price: string; duration: string; description: string };
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [planForm, setPlanForm] = useState<Plan>({ name: '', price: '', duration: '', description: '' });
+  const [editingPlanIdx, setEditingPlanIdx] = useState<number | null>(null);
+
+  const addPlan = () => {
+    if (!planForm.name || !planForm.price) return;
+    if (editingPlanIdx !== null) {
+      setPlans(p => p.map((pl, i) => i === editingPlanIdx ? { ...planForm } : pl));
+      setEditingPlanIdx(null);
+    } else {
+      setPlans(p => [...p, { ...planForm }]);
+    }
+    setPlanForm({ name: '', price: '', duration: '', description: '' });
+  };
+  const removePlan = (i: number) => setPlans(p => p.filter((_, idx) => idx !== i));
+  const editPlan = (i: number) => { setPlanForm({ ...plans[i] }); setEditingPlanIdx(i); };
+
+  useEffect(() => {
+    if (knowledge) {
+      setForm({
+        gym_name: knowledge.gym_name || '',
+        tagline: knowledge.tagline || '',
+        description: knowledge.description || '',
+        location_address: knowledge.location_address || '',
+        location_maps_url: knowledge.location_maps_url || '',
+        phone: knowledge.phone || '',
+        email: knowledge.email || '',
+        website_url: knowledge.website_url || '',
+        weekday_open: knowledge.weekday_open || '6:00 AM',
+        weekday_close: knowledge.weekday_close || '10:00 PM',
+        weekend_open: knowledge.weekend_open || '7:00 AM',
+        weekend_close: knowledge.weekend_close || '8:00 PM',
+        is_open_sundays: knowledge.is_open_sundays ?? true,
+        current_offers: knowledge.current_offers || '',
+        trainer_info: knowledge.trainer_info || '',
+        instagram_id: knowledge.instagram_id || '',
+        additional_info: knowledge.additional_info || '',
+      });
+      const facs = knowledge.facilities || [];
+      setFacilities(Array.isArray(facs) ? facs.map(String) : []);
+      const pls = knowledge.membership_plans || [];
+      setPlans(Array.isArray(pls) ? pls.map((p: any) => ({
+        name: p.name || '', price: String(p.price || ''),
+        duration: p.duration || '', description: p.description || '',
+      })) : []);
+    }
+  }, [knowledge]);
+
+  const handleSave = () => {
+    upsert.mutate({
+      gym_id: user?.gym_id,
+      ...form,
+      membership_plans: plans,
+      facilities: facilities,
+    }, {
+      onSuccess: () => { setSaved(true); setTimeout(() => setSaved(false), 2000); },
+    });
+  };
+
+  const field = (key: string, label: string, placeholder: string, multiline = false) => (
+    <View key={key} style={kbSt.field}>
+      <Text style={kbSt.label}>{label}</Text>
+      <TextInput
+        style={[kbSt.input, multiline && { height: 80, textAlignVertical: 'top', paddingTop: 10 }]}
+        placeholder={placeholder}
+        placeholderTextColor={Colors.textMuted}
+        value={(form as any)[key]}
+        onChangeText={v => setForm(p => ({ ...p, [key]: v }))}
+        multiline={multiline}
+      />
+    </View>
+  );
+
+  return (
+    <View style={[kbSt.container, { paddingTop: insets.top + 8 }]}>
+      <View style={kbSt.header}>
+        <Pressable onPress={onClose} style={kbSt.closeBtn}>
+          <Ionicons name="chevron-down" size={22} color={Colors.text} />
+        </Pressable>
+        <Text style={kbSt.headerTitle}>Gym Knowledge Base</Text>
+        <Pressable
+          style={[kbSt.saveBtn, saved && { backgroundColor: '#22C55E' }]}
+          onPress={handleSave}
+          disabled={upsert.isPending}
+        >
+          {upsert.isPending
+            ? <ActivityIndicator size="small" color="#000" />
+            : <Text style={kbSt.saveBtnText}>{saved ? 'Saved \u2713' : 'Save'}</Text>}
+        </Pressable>
+      </View>
+
+      {isLoading ? (
+        <ActivityIndicator style={{ marginTop: 40 }} color={Colors.primary} />
+      ) : (
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 16, gap: 4, paddingBottom: 40 }}>
+
+          <View style={kbSt.infoBox}>
+            <Ionicons name="information-circle-outline" size={15} color={Colors.info} />
+            <Text style={kbSt.infoText}>
+              This information is used by AI to answer questions from leads and members on WhatsApp and Instagram.
+            </Text>
+          </View>
+
+          <Text style={kbSt.section}>Basic Info</Text>
+          {field('gym_name', 'Gym Name', 'One Life Fitness')}
+          {field('tagline', 'Tagline', 'Your transformation starts here')}
+          {field('description', 'Description', 'Tell us about your gym...', true)}
+          {field('phone', 'Phone Number', '+91 98765 43210')}
+          {field('email', 'Email', 'gym@email.com')}
+          {field('website_url', 'Website URL', 'https://yourgymlabel.com')}
+
+          <Text style={kbSt.section}>Location</Text>
+          {field('location_address', 'Full Address', '123 Main Road, Ongole, AP 523001')}
+          {field('location_maps_url', 'Google Maps Link', 'https://maps.google.com/...')}
+
+          <Text style={kbSt.section}>Timings</Text>
+          <View style={kbSt.row}>
+            <View style={[kbSt.field, { flex: 1 }]}>
+              <Text style={kbSt.label}>Weekday Open</Text>
+              <TextInput style={kbSt.input} value={form.weekday_open} onChangeText={v => setForm(p => ({ ...p, weekday_open: v }))} placeholder="6:00 AM" placeholderTextColor={Colors.textMuted} />
+            </View>
+            <View style={[kbSt.field, { flex: 1 }]}>
+              <Text style={kbSt.label}>Weekday Close</Text>
+              <TextInput style={kbSt.input} value={form.weekday_close} onChangeText={v => setForm(p => ({ ...p, weekday_close: v }))} placeholder="10:00 PM" placeholderTextColor={Colors.textMuted} />
+            </View>
+          </View>
+          <View style={kbSt.row}>
+            <View style={[kbSt.field, { flex: 1 }]}>
+              <Text style={kbSt.label}>Weekend Open</Text>
+              <TextInput style={kbSt.input} value={form.weekend_open} onChangeText={v => setForm(p => ({ ...p, weekend_open: v }))} placeholder="7:00 AM" placeholderTextColor={Colors.textMuted} />
+            </View>
+            <View style={[kbSt.field, { flex: 1 }]}>
+              <Text style={kbSt.label}>Weekend Close</Text>
+              <TextInput style={kbSt.input} value={form.weekend_close} onChangeText={v => setForm(p => ({ ...p, weekend_close: v }))} placeholder="8:00 PM" placeholderTextColor={Colors.textMuted} />
+            </View>
+          </View>
+          <View style={kbSt.switchRow}>
+            <Text style={kbSt.switchLabel}>Open on Sundays</Text>
+            <Switch
+              value={form.is_open_sundays}
+              onValueChange={v => setForm(p => ({ ...p, is_open_sundays: v }))}
+              trackColor={{ true: Colors.primary }}
+            />
+          </View>
+
+          {/* Membership Plans */}
+          <Text style={kbSt.section}>Membership Plans</Text>
+          {plans.map((pl, i) => (
+            <View key={i} style={kbSt.planCard}>
+              <View style={{ flex: 1 }}>
+                <Text style={kbSt.planName}>{pl.name}</Text>
+                <Text style={kbSt.planMeta}>\u20b9{pl.price}  \u00b7  {pl.duration}</Text>
+                {!!pl.description && <Text style={kbSt.planDesc}>{pl.description}</Text>}
+              </View>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <Pressable onPress={() => editPlan(i)} style={kbSt.planIconBtn}>
+                  <Ionicons name="pencil-outline" size={16} color={Colors.info} />
+                </Pressable>
+                <Pressable onPress={() => removePlan(i)} style={kbSt.planIconBtn}>
+                  <Ionicons name="trash-outline" size={16} color={Colors.danger} />
+                </Pressable>
+              </View>
+            </View>
+          ))}
+          <View style={kbSt.planFormBox}>
+            <Text style={[kbSt.label, { marginBottom: 8 }]}>{editingPlanIdx !== null ? 'Edit Plan' : 'Add Plan'}</Text>
+            <View style={kbSt.row}>
+              <View style={{ flex: 1 }}>
+                <TextInput style={kbSt.input} placeholder="Name (e.g. Monthly)" placeholderTextColor={Colors.textMuted}
+                  value={planForm.name} onChangeText={v => setPlanForm(p => ({ ...p, name: v }))} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <TextInput style={kbSt.input} placeholder="Price" placeholderTextColor={Colors.textMuted}
+                  value={planForm.price} onChangeText={v => setPlanForm(p => ({ ...p, price: v }))} keyboardType="numeric" />
+              </View>
+            </View>
+            <View style={{ marginTop: 8 }}>
+              <TextInput style={kbSt.input} placeholder="Duration (e.g. 1 month, 3 months)" placeholderTextColor={Colors.textMuted}
+                value={planForm.duration} onChangeText={v => setPlanForm(p => ({ ...p, duration: v }))} />
+            </View>
+            <View style={{ marginTop: 8 }}>
+              <TextInput style={kbSt.input} placeholder="Description (optional)" placeholderTextColor={Colors.textMuted}
+                value={planForm.description} onChangeText={v => setPlanForm(p => ({ ...p, description: v }))} />
+            </View>
+            <Pressable
+              style={[kbSt.addTagBtn, (!planForm.name || !planForm.price) && { opacity: 0.4 }]}
+              onPress={addPlan} disabled={!planForm.name || !planForm.price}
+            >
+              <Ionicons name={editingPlanIdx !== null ? "checkmark" : "add"} size={16} color="#000" />
+              <Text style={kbSt.addTagBtnText}>{editingPlanIdx !== null ? 'Update Plan' : 'Add Plan'}</Text>
+            </Pressable>
+            {editingPlanIdx !== null && (
+              <Pressable style={[kbSt.addTagBtn, { backgroundColor: Colors.card, marginTop: 6 }]}
+                onPress={() => { setEditingPlanIdx(null); setPlanForm({ name: '', price: '', duration: '', description: '' }); }}>
+                <Text style={[kbSt.addTagBtnText, { color: Colors.textSecondary }]}>Cancel</Text>
+              </Pressable>
+            )}
+          </View>
+
+          {/* Facilities */}
+          <Text style={kbSt.section}>Facilities</Text>
+          <View style={kbSt.tagWrap}>
+            {facilities.map((f, i) => (
+              <Pressable key={i} style={kbSt.tag} onPress={() => removeFacility(i)}>
+                <Text style={kbSt.tagText}>{f}</Text>
+                <Ionicons name="close-circle" size={14} color={Colors.primary} style={{ marginLeft: 4 }} />
+              </Pressable>
+            ))}
+          </View>
+          <View style={kbSt.tagInputRow}>
+            <TextInput
+              style={[kbSt.input, { flex: 1 }]}
+              placeholder="e.g. AC Hall, Cardio Zone..."
+              placeholderTextColor={Colors.textMuted}
+              value={facilityInput}
+              onChangeText={setFacilityInput}
+              onSubmitEditing={addFacility}
+              returnKeyType="done"
+            />
+            <Pressable style={kbSt.addTagBtn} onPress={addFacility}>
+              <Ionicons name="add" size={18} color="#000" />
+            </Pressable>
+          </View>
+
+          <Text style={kbSt.section}>Other Info</Text>
+          {field('current_offers', 'Current Offers / Discounts', 'e.g. 20% off on annual memberships this month')}
+          {field('trainer_info', 'Trainer Info', 'e.g. 3 certified trainers with 5+ years experience', true)}
+          {field('instagram_id', 'Instagram Page ID', 'Required for Instagram DM automation')}
+          {field('additional_info', 'Additional Info for AI', 'Any other context the AI should know...', true)}
+
+        </ScrollView>
+      )}
+    </View>
+  );
+}
+
+// ── Automation Config Section ──────────────────────────────────────────────
+function AutomationConfigSection({ onClose }: { onClose: () => void }) {
+  const insets = useSafeAreaInsets();
+  const { user } = useAuth();
+  const { data: config, isLoading } = useGymAutomationConfig(user?.gym_id);
+  const upsert = useUpsertGymAutomationConfig();
+
+  const [form, setForm] = useState({
+    whatsapp_automation_enabled: true,
+    instagram_automation_enabled: false,
+    lead_pipeline_enabled: true,
+    member_query_enabled: true,
+    expiry_reminders_enabled: true,
+    diet_messages_enabled: false,
+    subscription_reminders_enabled: true,
+    expiry_reminder_time: '07:00',
+    diet_message_time: '07:00',
+    subscription_reminder_time: '09:00',
+    expiry_reminder_days_before: 1,
+  });
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (config) {
+      setForm({
+        whatsapp_automation_enabled: config.whatsapp_automation_enabled ?? true,
+        instagram_automation_enabled: config.instagram_automation_enabled ?? false,
+        lead_pipeline_enabled: config.lead_pipeline_enabled ?? true,
+        member_query_enabled: config.member_query_enabled ?? true,
+        expiry_reminders_enabled: config.expiry_reminders_enabled ?? true,
+        diet_messages_enabled: config.diet_messages_enabled ?? false,
+        subscription_reminders_enabled: config.subscription_reminders_enabled ?? true,
+        expiry_reminder_time: config.expiry_reminder_time || '07:00',
+        diet_message_time: config.diet_message_time || '07:00',
+        subscription_reminder_time: config.subscription_reminder_time || '09:00',
+        expiry_reminder_days_before: config.expiry_reminder_days_before ?? 1,
+      });
+    }
+  }, [config]);
+
+  const handleSave = () => {
+    upsert.mutate({ gym_id: user?.gym_id, ...form }, {
+      onSuccess: () => { setSaved(true); setTimeout(() => setSaved(false), 2000); },
+    });
+  };
+
+  const toggle = (key: string, label: string, subtitle?: string) => (
+    <View key={key} style={acSt.toggleRow}>
+      <View style={{ flex: 1 }}>
+        <Text style={acSt.toggleLabel}>{label}</Text>
+        {subtitle && <Text style={acSt.toggleSub}>{subtitle}</Text>}
+      </View>
+      <Switch
+        value={(form as any)[key]}
+        onValueChange={v => setForm(p => ({ ...p, [key]: v }))}
+        trackColor={{ true: Colors.primary }}
+      />
+    </View>
+  );
+
+  const timeField = (key: string, label: string) => (
+    <View key={key} style={acSt.field}>
+      <Text style={acSt.fieldLabel}>{label}</Text>
+      <TextInput
+        style={acSt.fieldInput}
+        value={(form as any)[key]}
+        onChangeText={v => setForm(p => ({ ...p, [key]: v }))}
+        placeholder="07:00"
+        placeholderTextColor={Colors.textMuted}
+      />
+      <Text style={acSt.fieldHint}>24hr format e.g. 07:00, 18:30</Text>
+    </View>
+  );
+
+  return (
+    <View style={[acSt.container, { paddingTop: insets.top + 8 }]}>
+      <View style={acSt.header}>
+        <Pressable onPress={onClose} style={acSt.closeBtn}>
+          <Ionicons name="chevron-down" size={22} color={Colors.text} />
+        </Pressable>
+        <Text style={acSt.headerTitle}>Automation Settings</Text>
+        <Pressable
+          style={[acSt.saveBtn, saved && { backgroundColor: '#22C55E' }]}
+          onPress={handleSave}
+          disabled={upsert.isPending}
+        >
+          {upsert.isPending
+            ? <ActivityIndicator size="small" color="#000" />
+            : <Text style={acSt.saveBtnText}>{saved ? 'Saved ✓' : 'Save'}</Text>}
+        </Pressable>
+      </View>
+
+      {isLoading ? (
+        <ActivityIndicator style={{ marginTop: 40 }} color={Colors.primary} />
+      ) : (
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 16, gap: 4, paddingBottom: 40 }}>
+
+          <Text style={acSt.section}>Modules</Text>
+          {toggle('whatsapp_automation_enabled', 'WhatsApp Automation', 'AI replies to incoming WhatsApp messages')}
+          {toggle('instagram_automation_enabled', 'Instagram Automation', 'AI replies to Instagram DMs (requires Instagram ID in Knowledge Base)')}
+          {toggle('lead_pipeline_enabled', 'Lead Pipeline', 'Auto-capture & manage leads through AI pipeline')}
+          {toggle('member_query_enabled', 'Member Query Answering', 'AI answers existing member questions using gym knowledge')}
+          {toggle('expiry_reminders_enabled', 'Expiry Reminders', 'WhatsApp reminder sent before membership expires')}
+          {toggle('diet_messages_enabled', 'Diet Messages', 'Daily diet plan messages to members')}
+          {toggle('subscription_reminders_enabled', 'Subscription Reminders', 'Remind gym owner before their platform subscription expires')}
+
+          <Text style={acSt.section}>Timing Settings</Text>
+          {form.expiry_reminders_enabled && (
+            <>
+              {timeField('expiry_reminder_time', 'Expiry Reminder Time')}
+              <View style={acSt.field}>
+                <Text style={acSt.fieldLabel}>Days Before Expiry to Remind</Text>
+                <TextInput
+                  style={acSt.fieldInput}
+                  value={String(form.expiry_reminder_days_before)}
+                  onChangeText={v => setForm(p => ({ ...p, expiry_reminder_days_before: parseInt(v) || 1 }))}
+                  keyboardType="numeric"
+                  placeholder="1"
+                  placeholderTextColor={Colors.textMuted}
+                />
+                <Text style={acSt.fieldHint}>Number of days before expiry to send WhatsApp reminder</Text>
+              </View>
+            </>
+          )}
+          {form.diet_messages_enabled && timeField('diet_message_time', 'Diet Message Time')}
+          {form.subscription_reminders_enabled && timeField('subscription_reminder_time', 'Subscription Reminder Time')}
+
+        </ScrollView>
+      )}
+    </View>
+  );
+}
+
+const kbSt = StyleSheet.create({
+  container: { flex: 1, backgroundColor: Colors.background },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: Colors.border },
+  closeBtn: { padding: 4, marginRight: 8 },
+  headerTitle: { fontFamily: 'Inter_700Bold', fontSize: 18, color: Colors.text, flex: 1 },
+  saveBtn: { backgroundColor: Colors.primary, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10 },
+  saveBtnText: { fontFamily: 'Inter_600SemiBold', fontSize: 14, color: '#000' },
+  section: { fontFamily: 'Inter_700Bold', fontSize: 14, color: Colors.text, marginTop: 20, marginBottom: 8 },
+  field: { gap: 5, marginBottom: 12 },
+  label: { fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 },
+  input: { backgroundColor: Colors.card, borderRadius: 10, height: 44, paddingHorizontal: 12, fontFamily: 'Inter_400Regular', fontSize: 14, color: Colors.text, borderWidth: 1, borderColor: Colors.border },
+  row: { flexDirection: 'row', gap: 10 },
+  switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8 },
+  switchLabel: { fontFamily: 'Inter_500Medium', fontSize: 14, color: Colors.text },
+  infoBox: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: Colors.info + '10', borderRadius: 10, padding: 10, borderWidth: 1, borderColor: Colors.info + '30', marginBottom: 10 },
+  infoText: { fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.info, flex: 1, lineHeight: 17 },
+  // Plan styles
+  planCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.card, borderRadius: 10, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: Colors.border },
+  planName: { fontFamily: 'Inter_600SemiBold', fontSize: 14, color: Colors.text },
+  planMeta: { fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
+  planDesc: { fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted, marginTop: 2 },
+  planIconBtn: { padding: 6 },
+  planFormBox: { backgroundColor: Colors.card, borderRadius: 10, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: Colors.border },
+  addTagBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.primary, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14, marginTop: 10, gap: 4 },
+  addTagBtnText: { fontFamily: 'Inter_600SemiBold', fontSize: 13, color: '#000' },
+  // Facility tag styles
+  tagWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
+  tag: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.primaryMuted, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1, borderColor: Colors.primary + '40' },
+  tagText: { fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.primary },
+  tagInputRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+});
+
+const acSt = StyleSheet.create({
+  container: { flex: 1, backgroundColor: Colors.background },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: Colors.border },
+  closeBtn: { padding: 4, marginRight: 8 },
+  headerTitle: { fontFamily: 'Inter_700Bold', fontSize: 18, color: Colors.text, flex: 1 },
+  saveBtn: { backgroundColor: Colors.primary, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10 },
+  saveBtnText: { fontFamily: 'Inter_600SemiBold', fontSize: 14, color: '#000' },
+  section: { fontFamily: 'Inter_700Bold', fontSize: 14, color: Colors.text, marginTop: 20, marginBottom: 8 },
+  toggleRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: Colors.border, gap: 12 },
+  toggleLabel: { fontFamily: 'Inter_500Medium', fontSize: 14, color: Colors.text },
+  toggleSub: { fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.textMuted, marginTop: 2 },
+  field: { gap: 5, marginBottom: 16 },
+  fieldLabel: { fontFamily: 'Inter_500Medium', fontSize: 12, color: Colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 },
+  fieldInput: { backgroundColor: Colors.card, borderRadius: 10, height: 44, paddingHorizontal: 12, fontFamily: 'Inter_400Regular', fontSize: 15, color: Colors.text, borderWidth: 1, borderColor: Colors.border },
+  fieldHint: { fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted },
 });

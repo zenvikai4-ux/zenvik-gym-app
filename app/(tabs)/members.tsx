@@ -424,18 +424,31 @@ export default function MembersScreen() {
     });
   };
 
-  const handleRenew = (m: any) => {
-    const joiningDate = today();
-    const newExpiry = addDays(joiningDate, PLAN_DAYS[m.plan] || 30);
-    updateMember.mutate({ id: m.id, joining_date: joiningDate, expiry_date: newExpiry, status: 'active' }, {
+  // Renewal modal state
+  const [renewMember, setRenewMember] = useState<any>(null);
+  const [renewPlan, setRenewPlan] = useState('Monthly');
+  const [renewStartFrom, setRenewStartFrom] = useState<'expiry' | 'today'>('expiry');
+
+  const renewExpiry = (() => {
+    if (!renewMember) return '';
+    const base = renewStartFrom === 'expiry' && renewMember.expiry_date && daysUntil(renewMember.expiry_date) > 0
+      ? renewMember.expiry_date
+      : today();
+    return addDays(base, PLAN_DAYS[renewPlan] || 30);
+  })();
+
+  const handleRenewConfirm = () => {
+    if (!renewMember) return;
+    updateMember.mutate({ id: renewMember.id, plan: renewPlan, expiry_date: renewExpiry, status: 'active' }, {
       onSuccess: () => {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setRenewMember(null);
         setSelected(null);
         insertActivity.mutate({
           gym_id: gymId || null,
           actor_name: user?.name || 'Owner',
           action: 'Renewed membership',
-          details: `${m.name} → ${newExpiry}`,
+          details: `${renewMember.name} → ${renewPlan} until ${renewExpiry}`,
         });
       },
     });
@@ -518,17 +531,25 @@ export default function MembersScreen() {
         {!!search && <Pressable onPress={() => setSearch('')}><Ionicons name="close-circle" size={16} color={Colors.textMuted} /></Pressable>}
       </View>
 
-      {/* Filters */}
+      {/* Filters with counts */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow} contentContainerStyle={styles.filterContent}>
-        {(['all', 'active', 'expiring', 'expired'] as const).map(f => (
+        {([
+          { key: 'all', label: 'All', count: members.length },
+          { key: 'active', label: 'Active', count: members.filter((m: any) => m.status === 'active').length },
+          { key: 'expiring', label: 'Expiring', count: members.filter((m: any) => m.status === 'expiring').length },
+          { key: 'expired', label: 'Expired', count: members.filter((m: any) => m.status === 'expired').length },
+        ] as const).map(({ key: f, label, count }) => (
           <Pressable
             key={f}
             style={[styles.filterChip, filter === f && styles.filterChipActive]}
-            onPress={() => { setFilter(f); Haptics.selectionAsync(); }}
+            onPress={() => { setFilter(f as any); Haptics.selectionAsync(); }}
           >
             <Text style={[styles.filterChipText, filter === f && styles.filterChipTextActive]}>
-              {f.charAt(0).toUpperCase() + f.slice(1)}
+              {label}
             </Text>
+            <View style={[styles.filterBadge, filter === f && styles.filterBadgeActive]}>
+              <Text style={[styles.filterBadgeText, filter === f && styles.filterBadgeTextActive]}>{count}</Text>
+            </View>
           </Pressable>
         ))}
       </ScrollView>
@@ -795,13 +816,10 @@ export default function MembersScreen() {
               </View>
               <Pressable
                 style={[styles.submitBtn, { backgroundColor: Colors.info }]}
-                onPress={() => handleRenew(selected)}
-                disabled={updateMember.isPending}
+                onPress={() => { setRenewMember(selected); setRenewPlan(selected.plan || 'Monthly'); setRenewStartFrom(selected.expiry_date && daysUntil(selected.expiry_date) > 0 ? 'expiry' : 'today'); }}
               >
-                {updateMember.isPending
-                  ? <ActivityIndicator color="#fff" />
-                  : <><Ionicons name="refresh-outline" size={18} color="#fff" /><Text style={[styles.submitBtnText, { color: '#fff' }]}>Renew Membership</Text></>
-                }
+                <Ionicons name="refresh-outline" size={18} color="#fff" />
+                <Text style={[styles.submitBtnText, { color: '#fff' }]}>Renew Membership</Text>
               </Pressable>
               <Pressable
                 style={[styles.submitBtn, { backgroundColor: Colors.dangerMuted, marginTop: 10, borderWidth: 1, borderColor: Colors.danger + '40' }]}
@@ -917,6 +935,102 @@ export default function MembersScreen() {
         }}
         onCancel={() => setPendingDelete(null)}
       />
+
+      {/* Renewal Modal */}
+      <Modal visible={!!renewMember} animationType="slide" presentationStyle="formSheet" onRequestClose={() => setRenewMember(null)}>
+        {renewMember && (
+          <View style={[styles.modal, { paddingTop: insets.top + 16 }]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Renew — {renewMember.name}</Text>
+              <Pressable onPress={() => setRenewMember(null)}>
+                <Ionicons name="close" size={24} color={Colors.text} />
+              </Pressable>
+            </View>
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 16, paddingBottom: 40 }}>
+
+              {/* Current expiry info */}
+              <View style={{ backgroundColor: Colors.card, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: Colors.border, gap: 6 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <Text style={styles.formLabel}>Current Expiry</Text>
+                  <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: daysUntil(renewMember.expiry_date) <= 0 ? Colors.danger : Colors.text }}>
+                    {renewMember.expiry_date || 'Not set'}
+                    {renewMember.expiry_date ? ` (${daysUntil(renewMember.expiry_date) <= 0 ? 'Expired' : `${daysUntil(renewMember.expiry_date)}d left`})` : ''}
+                  </Text>
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <Text style={styles.formLabel}>Current Plan</Text>
+                  <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: Colors.text }}>{renewMember.plan || '—'}</Text>
+                </View>
+              </View>
+
+              {/* Start from */}
+              <View style={styles.formField}>
+                <Text style={styles.formLabel}>Renewal Starts From</Text>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  {[
+                    { value: 'expiry', label: 'Current Expiry', sub: renewMember.expiry_date && daysUntil(renewMember.expiry_date) > 0 ? renewMember.expiry_date : 'N/A (expired)' },
+                    { value: 'today', label: 'Today', sub: today() },
+                  ].map(opt => (
+                    <Pressable
+                      key={opt.value}
+                      style={[styles.formInput, { flex: 1, height: 'auto', padding: 12, justifyContent: 'center', alignItems: 'flex-start',
+                        borderColor: renewStartFrom === opt.value ? Colors.info : Colors.border,
+                        backgroundColor: renewStartFrom === opt.value ? Colors.info + '15' : Colors.card }]}
+                      onPress={() => setRenewStartFrom(opt.value as 'expiry' | 'today')}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Ionicons name={renewStartFrom === opt.value ? 'radio-button-on' : 'radio-button-off'} size={16} color={renewStartFrom === opt.value ? Colors.info : Colors.textMuted} />
+                        <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: renewStartFrom === opt.value ? Colors.info : Colors.text }}>{opt.label}</Text>
+                      </View>
+                      <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted, marginTop: 4, marginLeft: 22 }}>{opt.sub}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+
+              {/* Plan selection */}
+              <View style={styles.formField}>
+                <Text style={styles.formLabel}>New Plan</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  {PLANS.map(p => (
+                    <Pressable
+                      key={p}
+                      style={[styles.planChip, renewPlan === p && styles.planChipActive]}
+                      onPress={() => setRenewPlan(p)}
+                    >
+                      <Text style={[styles.planChipText, renewPlan === p && { color: Colors.primary }]}>{p}</Text>
+                      <Text style={[styles.planChipDays, renewPlan === p && { color: Colors.primary }]}>{PLAN_DAYS[p]}d</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+
+              {/* New expiry preview */}
+              <View style={{ backgroundColor: Colors.primaryMuted, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: Colors.primary + '40', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <View>
+                  <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 12, color: Colors.textMuted }}>New Expiry Date</Text>
+                  <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 20, color: Colors.primary, marginTop: 2 }}>{renewExpiry}</Text>
+                  <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted, marginTop: 2 }}>
+                    {renewPlan} from {renewStartFrom === 'expiry' && renewMember.expiry_date && daysUntil(renewMember.expiry_date) > 0 ? renewMember.expiry_date : today()}
+                  </Text>
+                </View>
+                <Ionicons name="calendar-outline" size={28} color={Colors.primary} />
+              </View>
+
+              <Pressable
+                style={[styles.submitBtn, { backgroundColor: Colors.info }, updateMember.isPending && { opacity: 0.6 }]}
+                onPress={handleRenewConfirm}
+                disabled={updateMember.isPending}
+              >
+                {updateMember.isPending
+                  ? <ActivityIndicator color="#fff" />
+                  : <><Ionicons name="checkmark-circle-outline" size={18} color="#fff" /><Text style={[styles.submitBtnText, { color: '#fff' }]}>Confirm Renewal</Text></>}
+              </Pressable>
+
+            </ScrollView>
+          </View>
+        )}
+      </Modal>
     </View>
   );
 }
@@ -934,6 +1048,10 @@ const styles = StyleSheet.create({
   filterChipActive: { backgroundColor: Colors.primaryMuted, borderColor: Colors.primary },
   filterChipText: { fontFamily: 'Inter_500Medium', fontSize: 12, color: Colors.textSecondary },
   filterChipTextActive: { color: Colors.primary },
+  filterBadge: { backgroundColor: Colors.secondary, borderRadius: 10, minWidth: 20, paddingHorizontal: 5, paddingVertical: 1, alignItems: 'center', justifyContent: 'center', marginLeft: 5 },
+  filterBadgeActive: { backgroundColor: Colors.primary },
+  filterBadgeText: { fontFamily: 'Inter_600SemiBold', fontSize: 10, color: Colors.textMuted },
+  filterBadgeTextActive: { color: '#000' },
   card: { backgroundColor: Colors.card, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: Colors.border, gap: 8 },
   cardTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   cardAvatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: Colors.primaryMuted, alignItems: 'center', justifyContent: 'center' },
