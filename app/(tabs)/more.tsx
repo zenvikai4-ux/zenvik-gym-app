@@ -186,7 +186,9 @@ export default function MoreScreen() {
         <SendQueryModal onClose={() => setActiveSection(null)} />
       </Modal>
       <Modal visible={activeSection === 'my_modules'} animationType="slide" onRequestClose={() => setActiveSection(null)}>
-        <MyModulesSection onClose={() => setActiveSection(null)} />
+        {isAdmin
+          ? <ModulesSection onClose={() => setActiveSection(null)} />
+          : <MyModulesSection onClose={() => setActiveSection(null)} />}
       </Modal>
       <Modal visible={activeSection === 'gym_knowledge'} animationType="slide" onRequestClose={() => setActiveSection(null)}>
         <GymKnowledgeSection onClose={() => setActiveSection(null)} />
