@@ -426,7 +426,9 @@ export default function MembersScreen() {
 
   const handleRenew = (m: any) => {
     const joiningDate = today();
-    const newExpiry = addDays(joiningDate, PLAN_DAYS[m.plan] || 30);
+    // Extend from current expiry if still active (preserve remaining days), else from today
+    const baseDate = m.expiry_date && daysUntil(m.expiry_date) > 0 ? m.expiry_date : joiningDate;
+    const newExpiry = addDays(baseDate, PLAN_DAYS[m.plan] || 30);
     updateMember.mutate({ id: m.id, joining_date: joiningDate, expiry_date: newExpiry, status: 'active' }, {
       onSuccess: () => {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -518,17 +520,25 @@ export default function MembersScreen() {
         {!!search && <Pressable onPress={() => setSearch('')}><Ionicons name="close-circle" size={16} color={Colors.textMuted} /></Pressable>}
       </View>
 
-      {/* Filters */}
+      {/* Filters with counts */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow} contentContainerStyle={styles.filterContent}>
-        {(['all', 'active', 'expiring', 'expired'] as const).map(f => (
+        {([
+          { key: 'all', label: 'All', count: members.length },
+          { key: 'active', label: 'Active', count: members.filter((m: any) => m.status === 'active').length },
+          { key: 'expiring', label: 'Expiring', count: members.filter((m: any) => m.status === 'expiring').length },
+          { key: 'expired', label: 'Expired', count: members.filter((m: any) => m.status === 'expired').length },
+        ] as const).map(({ key: f, label, count }) => (
           <Pressable
             key={f}
             style={[styles.filterChip, filter === f && styles.filterChipActive]}
-            onPress={() => { setFilter(f); Haptics.selectionAsync(); }}
+            onPress={() => { setFilter(f as any); Haptics.selectionAsync(); }}
           >
             <Text style={[styles.filterChipText, filter === f && styles.filterChipTextActive]}>
-              {f.charAt(0).toUpperCase() + f.slice(1)}
+              {label}
             </Text>
+            <View style={[styles.filterBadge, filter === f && styles.filterBadgeActive]}>
+              <Text style={[styles.filterBadgeText, filter === f && styles.filterBadgeTextActive]}>{count}</Text>
+            </View>
           </Pressable>
         ))}
       </ScrollView>
@@ -934,6 +944,10 @@ const styles = StyleSheet.create({
   filterChipActive: { backgroundColor: Colors.primaryMuted, borderColor: Colors.primary },
   filterChipText: { fontFamily: 'Inter_500Medium', fontSize: 12, color: Colors.textSecondary },
   filterChipTextActive: { color: Colors.primary },
+  filterBadge: { backgroundColor: Colors.secondary, borderRadius: 10, minWidth: 20, paddingHorizontal: 5, paddingVertical: 1, alignItems: 'center', justifyContent: 'center', marginLeft: 5 },
+  filterBadgeActive: { backgroundColor: Colors.primary },
+  filterBadgeText: { fontFamily: 'Inter_600SemiBold', fontSize: 10, color: Colors.textMuted },
+  filterBadgeTextActive: { color: '#000' },
   card: { backgroundColor: Colors.card, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: Colors.border, gap: 8 },
   cardTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   cardAvatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: Colors.primaryMuted, alignItems: 'center', justifyContent: 'center' },

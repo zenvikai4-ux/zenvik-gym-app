@@ -97,6 +97,17 @@ export function useInsertLead() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (lead: any) => {
+      // Server-side duplicate check: if a lead with same phone+gym already exists, return it
+      if (lead.phone && lead.gym_id) {
+        const normalizedPhone = lead.phone.replace(/\s+/g, '');
+        const { data: existing } = await supabase
+          .from('leads')
+          .select('id')
+          .eq('gym_id', lead.gym_id)
+          .ilike('phone', normalizedPhone)
+          .maybeSingle();
+        if (existing) throw new Error('A lead with this phone number already exists.');
+      }
       const { data, error } = await supabase.from('leads').insert(lead).select().single();
       if (error) throw error;
       return data;

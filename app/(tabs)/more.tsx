@@ -20,8 +20,7 @@ import {
   useGymSubscriptionByGym,
   useBroadcastWhatsApp, useBroadcastInApp, useInsertQuery,
   useInsertModule, useUpdateModule, useDeleteModule,
-  useAutoInvoice, useGymModulePrice,
-  useLatestInvoice, useUpsertGymSubscription,
+  useAutoInvoice, useGymModulePrice, useInsertNotification, useLatestInvoice, useUpsertGymSubscription,
   useGymKnowledge, useUpsertGymKnowledge,
   useGymAutomationConfig, useUpsertGymAutomationConfig,
 } from '@/lib/hooks';
@@ -77,6 +76,7 @@ export default function MoreScreen() {
       { key: 'analytics', label: 'Analytics', icon: 'bar-chart-outline', color: Colors.info },
       { key: 'broadcast_whatsapp', label: 'WhatsApp Broadcast', icon: 'logo-whatsapp', color: '#25D366' },
       { key: 'broadcast_inapp', label: 'In-App Broadcast', icon: 'notifications-outline', color: Colors.info },
+      { key: 'my_modules', label: 'My Modules', icon: 'grid-outline', color: Colors.purple },
       { key: 'gym_knowledge', label: 'Gym Knowledge Base', icon: 'book-outline', color: Colors.warning },
       { key: 'automation_config', label: 'Automation Settings', icon: 'flash-outline', color: '#E1306C' },
     );
@@ -1268,10 +1268,12 @@ function BillingSection({ onClose }: { onClose: () => void }) {
   const updateInvoice = useUpdateInvoice();
   const autoInvoice = useAutoInvoice();
   const upsertSubscription = useUpsertGymSubscription();
+  const insertNotification = useInsertNotification();
 
   const [statusFilter, setStatusFilter] = useState('all');
   const [filterGym, setFilterGym] = useState('');
   const [generating, setGenerating] = useState<string | null>(null);
+  const [sendingId, setSendingId] = useState<string | null>(null);
 
   const totalPaid = invoices.filter((i: any) => i.status === 'paid').reduce((s: number, i: any) => s + (i.amount ?? 0), 0);
   const totalPending = invoices.filter((i: any) => i.status === 'pending').reduce((s: number, i: any) => s + (i.amount ?? 0), 0);
@@ -1288,6 +1290,25 @@ function BillingSection({ onClose }: { onClose: () => void }) {
     else updates.paid_at = null;
     updateInvoice.mutate({ id: inv.id, ...updates }, {
       onSuccess: () => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success),
+    });
+  };
+
+  const handleSendInvoice = (inv: any) => {
+    const gymName = gyms.find((g: any) => g.id === inv.gym_id)?.name ?? 'Your Gym';
+    const dueDate = inv.due_date ? new Date(inv.due_date).toLocaleDateString('en-IN') : 'Soon';
+    setSendingId(inv.id);
+    insertNotification.mutate({
+      gym_id: inv.gym_id,
+      title: `🧾 Invoice Due — ₹${(inv.amount ?? 0).toLocaleString('en-IN')}`,
+      body: `Your monthly invoice of ₹${(inv.amount ?? 0).toLocaleString('en-IN')} for ${gymName} is due by ${dueDate}. ${inv.description || ''}. Please contact your platform admin to pay.`,
+      type: 'fee_reminder',
+    }, {
+      onSuccess: () => {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        Alert.alert('Sent', `Invoice notification sent to ${gymName} owner.`);
+        setSendingId(null);
+      },
+      onError: (e: any) => { Alert.alert('Error', e.message); setSendingId(null); },
     });
   };
 
@@ -1429,18 +1450,32 @@ function BillingSection({ onClose }: { onClose: () => void }) {
                   <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 16, color: Colors.text }}>₹{(inv.amount ?? 0).toLocaleString('en-IN')}</Text>
                   <Text style={section.sub}>Due: {fmtDate(inv.due_date)}{isPaid && inv.paid_at ? ` · Paid: ${fmtDate(inv.paid_at)}` : ''}</Text>
                 </View>
-                <Pressable
-                  style={{ flexDirection: 'row', gap: 6, alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1,
-                    backgroundColor: isPaid ? Colors.secondary : Colors.primaryMuted,
-                    borderColor: isPaid ? Colors.border : Colors.primary }}
-                  onPress={() => togglePaid(inv)}
-                  disabled={updateInvoice.isPending}
-                >
-                  <Ionicons name={isPaid ? 'arrow-undo-outline' : 'checkmark-circle-outline'} size={15} color={isPaid ? Colors.textMuted : Colors.primary} />
-                  <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 12, color: isPaid ? Colors.textMuted : Colors.primary }}>
-                    {isPaid ? 'Undo' : 'Mark Paid'}
-                  </Text>
-                </Pressable>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  {!isPaid && (
+                    <Pressable
+                      style={{ flexDirection: 'row', gap: 5, alignItems: 'center', paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, borderWidth: 1, backgroundColor: Colors.warning + '15', borderColor: Colors.warning + '50', opacity: sendingId === inv.id ? 0.6 : 1 }}
+                      onPress={() => handleSendInvoice(inv)}
+                      disabled={sendingId === inv.id}
+                    >
+                      {sendingId === inv.id
+                        ? <ActivityIndicator size="small" color={Colors.warning} />
+                        : <Ionicons name="send-outline" size={14} color={Colors.warning} />}
+                      <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 12, color: Colors.warning }}>Send</Text>
+                    </Pressable>
+                  )}
+                  <Pressable
+                    style={{ flexDirection: 'row', gap: 6, alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1,
+                      backgroundColor: isPaid ? Colors.secondary : Colors.primaryMuted,
+                      borderColor: isPaid ? Colors.border : Colors.primary }}
+                    onPress={() => togglePaid(inv)}
+                    disabled={updateInvoice.isPending}
+                  >
+                    <Ionicons name={isPaid ? 'arrow-undo-outline' : 'checkmark-circle-outline'} size={15} color={isPaid ? Colors.textMuted : Colors.primary} />
+                    <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 12, color: isPaid ? Colors.textMuted : Colors.primary }}>
+                      {isPaid ? 'Undo' : 'Mark Paid'}
+                    </Text>
+                  </Pressable>
+                </View>
               </View>
             </View>
           );
@@ -1811,9 +1846,6 @@ function MyModulesSection({ onClose }: { onClose: () => void }) {
                     {!!gm.module?.description && (
                       <Text style={{ fontFamily: "Inter_400Regular", fontSize: 12, color: Colors.textSecondary, marginTop: 2 }}>{gm.module.description}</Text>
                     )}
-                    <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 12, color: Colors.primary, marginTop: 2 }}>
-                      Rs.{(gm.module?.price || 0).toLocaleString("en-IN")}/mo
-                    </Text>
                   </View>
                 </View>
               ))}
@@ -1872,6 +1904,15 @@ function BroadcastWhatsAppModal({ onClose }: { onClose: () => void }) {
   const [sent, setSent] = useState(false);
   const [sendError, setSendError] = useState('');
 
+  const handleClose = () => {
+    setMessage('');
+    setRecipient('both');
+    setSent(false);
+    setSendError('');
+    broadcast.reset();
+    onClose();
+  };
+
   const handleSend = () => {
     if (!message.trim() || !user?.gym_id) return;
     setSendError('');
@@ -1899,7 +1940,7 @@ function BroadcastWhatsAppModal({ onClose }: { onClose: () => void }) {
           <Text style={{ color: Colors.textSecondary, fontFamily: 'Inter_400Regular', textAlign: 'center', marginTop: 8, marginBottom: 20 }}>
             Your message has been queued. WhatsApp messages will be sent to all {recipient === 'both' ? 'members & trainers' : recipient === 'clients' ? 'members' : 'trainers'} shortly.
           </Text>
-          <Pressable style={[broadcastStyles.sendBtn, { backgroundColor: '#25D366' }]} onPress={onClose}>
+          <Pressable style={[broadcastStyles.sendBtn, { backgroundColor: '#25D366' }]} onPress={handleClose}>
             <Text style={[broadcastStyles.sendBtnText, { color: '#fff' }]}>Done</Text>
           </Pressable>
         </View>
@@ -1909,14 +1950,14 @@ function BroadcastWhatsAppModal({ onClose }: { onClose: () => void }) {
 
   return (
     <KeyboardAvoidingView style={[broadcastStyles.overlay]} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <Pressable style={{ flex: 1 }} onPress={onClose} />
+      <Pressable style={{ flex: 1 }} onPress={handleClose} />
       <View style={[broadcastStyles.sheet, { paddingBottom: insets.bottom + 20 }]}>
         <View style={broadcastStyles.header}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Ionicons name="logo-whatsapp" size={22} color="#25D366" />
             <Text style={broadcastStyles.title}>WhatsApp Broadcast</Text>
           </View>
-          <Pressable onPress={onClose}>
+          <Pressable onPress={handleClose}>
             <Ionicons name="close" size={22} color={Colors.text} />
           </Pressable>
         </View>
@@ -2009,6 +2050,14 @@ function BroadcastInAppModal({ onClose }: { onClose: () => void }) {
   const [recipient, setRecipient] = useState<'clients' | 'trainers' | 'both'>('both');
   const [sent, setSent] = useState(false);
 
+  const handleClose = () => {
+    setMessage('');
+    setRecipient('both');
+    setSent(false);
+    broadcast.reset();
+    onClose();
+  };
+
   const handleSend = () => {
     if (!message.trim() || !user?.gym_id) return;
     broadcast.mutate(
@@ -2035,7 +2084,7 @@ function BroadcastInAppModal({ onClose }: { onClose: () => void }) {
           <Text style={{ color: Colors.textSecondary, fontFamily: 'Inter_400Regular', textAlign: 'center', marginTop: 8, marginBottom: 20 }}>
             In-app notification delivered to all {recipient === 'both' ? 'members & trainers' : recipient === 'clients' ? 'members' : 'trainers'} successfully.
           </Text>
-          <Pressable style={[broadcastStyles.sendBtn, { backgroundColor: Colors.info }]} onPress={onClose}>
+          <Pressable style={[broadcastStyles.sendBtn, { backgroundColor: Colors.info }]} onPress={handleClose}>
             <Text style={[broadcastStyles.sendBtnText, { color: '#fff' }]}>Done</Text>
           </Pressable>
         </View>
@@ -2045,14 +2094,14 @@ function BroadcastInAppModal({ onClose }: { onClose: () => void }) {
 
   return (
     <KeyboardAvoidingView style={[broadcastStyles.overlay]} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <Pressable style={{ flex: 1 }} onPress={onClose} />
+      <Pressable style={{ flex: 1 }} onPress={handleClose} />
       <View style={[broadcastStyles.sheet, { paddingBottom: insets.bottom + 20 }]}>
         <View style={broadcastStyles.header}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Ionicons name="notifications-outline" size={22} color={Colors.info} />
             <Text style={broadcastStyles.title}>In-App Broadcast</Text>
           </View>
-          <Pressable onPress={onClose}>
+          <Pressable onPress={handleClose}>
             <Ionicons name="close" size={22} color={Colors.text} />
           </Pressable>
         </View>
@@ -2432,9 +2481,38 @@ function GymKnowledgeSection({ onClose }: { onClose: () => void }) {
     weekend_open: '7:00 AM', weekend_close: '8:00 PM',
     is_open_sundays: true,
     current_offers: '', trainer_info: '', instagram_id: '', additional_info: '',
-    membership_plans: '[]', facilities: '[]',
   });
   const [saved, setSaved] = useState(false);
+
+  // Facilities: simple tag list
+  const [facilities, setFacilities] = useState<string[]>([]);
+  const [facilityInput, setFacilityInput] = useState('');
+
+  const addFacility = () => {
+    const v = facilityInput.trim();
+    if (v && !facilities.includes(v)) setFacilities(p => [...p, v]);
+    setFacilityInput('');
+  };
+  const removeFacility = (i: number) => setFacilities(p => p.filter((_, idx) => idx !== i));
+
+  // Membership Plans: structured rows
+  type Plan = { name: string; price: string; duration: string; description: string };
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [planForm, setPlanForm] = useState<Plan>({ name: '', price: '', duration: '', description: '' });
+  const [editingPlanIdx, setEditingPlanIdx] = useState<number | null>(null);
+
+  const addPlan = () => {
+    if (!planForm.name || !planForm.price) return;
+    if (editingPlanIdx !== null) {
+      setPlans(p => p.map((pl, i) => i === editingPlanIdx ? { ...planForm } : pl));
+      setEditingPlanIdx(null);
+    } else {
+      setPlans(p => [...p, { ...planForm }]);
+    }
+    setPlanForm({ name: '', price: '', duration: '', description: '' });
+  };
+  const removePlan = (i: number) => setPlans(p => p.filter((_, idx) => idx !== i));
+  const editPlan = (i: number) => { setPlanForm({ ...plans[i] }); setEditingPlanIdx(i); };
 
   useEffect(() => {
     if (knowledge) {
@@ -2456,23 +2534,23 @@ function GymKnowledgeSection({ onClose }: { onClose: () => void }) {
         trainer_info: knowledge.trainer_info || '',
         instagram_id: knowledge.instagram_id || '',
         additional_info: knowledge.additional_info || '',
-        membership_plans: JSON.stringify(knowledge.membership_plans || []),
-        facilities: JSON.stringify(knowledge.facilities || []),
       });
+      const facs = knowledge.facilities || [];
+      setFacilities(Array.isArray(facs) ? facs.map(String) : []);
+      const pls = knowledge.membership_plans || [];
+      setPlans(Array.isArray(pls) ? pls.map((p: any) => ({
+        name: p.name || '', price: String(p.price || ''),
+        duration: p.duration || '', description: p.description || '',
+      })) : []);
     }
   }, [knowledge]);
 
   const handleSave = () => {
-    let plans: any[] = [];
-    let facs: string[] = [];
-    try { plans = JSON.parse(form.membership_plans); } catch {}
-    try { facs = JSON.parse(form.facilities); } catch {}
-
     upsert.mutate({
       gym_id: user?.gym_id,
       ...form,
       membership_plans: plans,
-      facilities: facs,
+      facilities: facilities,
     }, {
       onSuccess: () => { setSaved(true); setTimeout(() => setSaved(false), 2000); },
     });
@@ -2506,7 +2584,7 @@ function GymKnowledgeSection({ onClose }: { onClose: () => void }) {
         >
           {upsert.isPending
             ? <ActivityIndicator size="small" color="#000" />
-            : <Text style={kbSt.saveBtnText}>{saved ? 'Saved ✓' : 'Save'}</Text>}
+            : <Text style={kbSt.saveBtnText}>{saved ? 'Saved \u2713' : 'Save'}</Text>}
         </Pressable>
       </View>
 
@@ -2564,33 +2642,84 @@ function GymKnowledgeSection({ onClose }: { onClose: () => void }) {
             />
           </View>
 
+          {/* Membership Plans */}
           <Text style={kbSt.section}>Membership Plans</Text>
-          <View style={kbSt.infoBox}>
-            <Ionicons name="information-circle-outline" size={14} color={Colors.info} />
-            <Text style={kbSt.infoText}>Enter as JSON array: [{"{"}"name":"Monthly","price":"1500","duration":"1 month","description":"Full access"{"}"}]</Text>
+          {plans.map((pl, i) => (
+            <View key={i} style={kbSt.planCard}>
+              <View style={{ flex: 1 }}>
+                <Text style={kbSt.planName}>{pl.name}</Text>
+                <Text style={kbSt.planMeta}>\u20b9{pl.price}  \u00b7  {pl.duration}</Text>
+                {!!pl.description && <Text style={kbSt.planDesc}>{pl.description}</Text>}
+              </View>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <Pressable onPress={() => editPlan(i)} style={kbSt.planIconBtn}>
+                  <Ionicons name="pencil-outline" size={16} color={Colors.info} />
+                </Pressable>
+                <Pressable onPress={() => removePlan(i)} style={kbSt.planIconBtn}>
+                  <Ionicons name="trash-outline" size={16} color={Colors.danger} />
+                </Pressable>
+              </View>
+            </View>
+          ))}
+          <View style={kbSt.planFormBox}>
+            <Text style={[kbSt.label, { marginBottom: 8 }]}>{editingPlanIdx !== null ? 'Edit Plan' : 'Add Plan'}</Text>
+            <View style={kbSt.row}>
+              <View style={{ flex: 1 }}>
+                <TextInput style={kbSt.input} placeholder="Name (e.g. Monthly)" placeholderTextColor={Colors.textMuted}
+                  value={planForm.name} onChangeText={v => setPlanForm(p => ({ ...p, name: v }))} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <TextInput style={kbSt.input} placeholder="Price" placeholderTextColor={Colors.textMuted}
+                  value={planForm.price} onChangeText={v => setPlanForm(p => ({ ...p, price: v }))} keyboardType="numeric" />
+              </View>
+            </View>
+            <View style={{ marginTop: 8 }}>
+              <TextInput style={kbSt.input} placeholder="Duration (e.g. 1 month, 3 months)" placeholderTextColor={Colors.textMuted}
+                value={planForm.duration} onChangeText={v => setPlanForm(p => ({ ...p, duration: v }))} />
+            </View>
+            <View style={{ marginTop: 8 }}>
+              <TextInput style={kbSt.input} placeholder="Description (optional)" placeholderTextColor={Colors.textMuted}
+                value={planForm.description} onChangeText={v => setPlanForm(p => ({ ...p, description: v }))} />
+            </View>
+            <Pressable
+              style={[kbSt.addTagBtn, (!planForm.name || !planForm.price) && { opacity: 0.4 }]}
+              onPress={addPlan} disabled={!planForm.name || !planForm.price}
+            >
+              <Ionicons name={editingPlanIdx !== null ? "checkmark" : "add"} size={16} color="#000" />
+              <Text style={kbSt.addTagBtnText}>{editingPlanIdx !== null ? 'Update Plan' : 'Add Plan'}</Text>
+            </Pressable>
+            {editingPlanIdx !== null && (
+              <Pressable style={[kbSt.addTagBtn, { backgroundColor: Colors.card, marginTop: 6 }]}
+                onPress={() => { setEditingPlanIdx(null); setPlanForm({ name: '', price: '', duration: '', description: '' }); }}>
+                <Text style={[kbSt.addTagBtnText, { color: Colors.textSecondary }]}>Cancel</Text>
+              </Pressable>
+            )}
           </View>
-          <TextInput
-            style={[kbSt.input, { height: 100, textAlignVertical: 'top', paddingTop: 10, fontFamily: 'Inter_400Regular', fontSize: 12 }]}
-            value={form.membership_plans}
-            onChangeText={v => setForm(p => ({ ...p, membership_plans: v }))}
-            placeholder={'[{"name":"Monthly","price":"1500","duration":"1 month","description":""}]'}
-            placeholderTextColor={Colors.textMuted}
-            multiline
-          />
 
+          {/* Facilities */}
           <Text style={kbSt.section}>Facilities</Text>
-          <View style={kbSt.infoBox}>
-            <Ionicons name="information-circle-outline" size={14} color={Colors.info} />
-            <Text style={kbSt.infoText}>Enter as JSON array: ["AC Hall","Personal Training","Cardio Zone","Locker Room"]</Text>
+          <View style={kbSt.tagWrap}>
+            {facilities.map((f, i) => (
+              <Pressable key={i} style={kbSt.tag} onPress={() => removeFacility(i)}>
+                <Text style={kbSt.tagText}>{f}</Text>
+                <Ionicons name="close-circle" size={14} color={Colors.primary} style={{ marginLeft: 4 }} />
+              </Pressable>
+            ))}
           </View>
-          <TextInput
-            style={[kbSt.input, { height: 80, textAlignVertical: 'top', paddingTop: 10, fontFamily: 'Inter_400Regular', fontSize: 12 }]}
-            value={form.facilities}
-            onChangeText={v => setForm(p => ({ ...p, facilities: v }))}
-            placeholder='["AC Hall","Cardio Zone","Personal Training"]'
-            placeholderTextColor={Colors.textMuted}
-            multiline
-          />
+          <View style={kbSt.tagInputRow}>
+            <TextInput
+              style={[kbSt.input, { flex: 1 }]}
+              placeholder="e.g. AC Hall, Cardio Zone..."
+              placeholderTextColor={Colors.textMuted}
+              value={facilityInput}
+              onChangeText={setFacilityInput}
+              onSubmitEditing={addFacility}
+              returnKeyType="done"
+            />
+            <Pressable style={kbSt.addTagBtn} onPress={addFacility}>
+              <Ionicons name="add" size={18} color="#000" />
+            </Pressable>
+          </View>
 
           <Text style={kbSt.section}>Other Info</Text>
           {field('current_offers', 'Current Offers / Discounts', 'e.g. 20% off on annual memberships this month')}
@@ -2604,24 +2733,6 @@ function GymKnowledgeSection({ onClose }: { onClose: () => void }) {
   );
 }
 
-const kbSt = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: Colors.border },
-  closeBtn: { padding: 4, marginRight: 8 },
-  headerTitle: { fontFamily: 'Inter_700Bold', fontSize: 18, color: Colors.text, flex: 1 },
-  saveBtn: { backgroundColor: Colors.primary, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10 },
-  saveBtnText: { fontFamily: 'Inter_600SemiBold', fontSize: 14, color: '#000' },
-  section: { fontFamily: 'Inter_700Bold', fontSize: 14, color: Colors.text, marginTop: 20, marginBottom: 8 },
-  field: { gap: 5, marginBottom: 12 },
-  label: { fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 },
-  input: { backgroundColor: Colors.card, borderRadius: 10, height: 44, paddingHorizontal: 12, fontFamily: 'Inter_400Regular', fontSize: 14, color: Colors.text, borderWidth: 1, borderColor: Colors.border },
-  row: { flexDirection: 'row', gap: 10 },
-  switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8 },
-  switchLabel: { fontFamily: 'Inter_500Medium', fontSize: 14, color: Colors.text },
-  infoBox: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: Colors.info + '10', borderRadius: 10, padding: 10, borderWidth: 1, borderColor: Colors.info + '30', marginBottom: 10 },
-  infoText: { fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.info, flex: 1, lineHeight: 17 },
-});
-
 // ── Automation Config Section ──────────────────────────────────────────────
 function AutomationConfigSection({ onClose }: { onClose: () => void }) {
   const insets = useSafeAreaInsets();
@@ -2630,9 +2741,9 @@ function AutomationConfigSection({ onClose }: { onClose: () => void }) {
   const { data: enabledModules } = useEnabledModules(user?.gym_id);
   const upsert = useUpsertGymAutomationConfig();
 
-  const hasLeadModule    = enabledModules?.has('whatsapp_leads') ?? false;
-  const hasTrainerDiet   = enabledModules?.has('trainer_diet') ?? false;
-  const hasInstagram     = enabledModules?.has('instagram_leads') ?? false;
+  const hasLeadModule  = enabledModules?.has('whatsapp leads') || enabledModules?.has('whatsapp_leads') || false;
+  const hasTrainerDiet = enabledModules?.has('trainer diet') || enabledModules?.has('trainer_diet') || false;
+  const hasInstagram   = enabledModules?.has('instagram leads') || enabledModules?.has('instagram_leads') || false;
 
   const [form, setForm] = useState({
     whatsapp_automation_enabled: true,
@@ -2762,6 +2873,8 @@ function AutomationConfigSection({ onClose }: { onClose: () => void }) {
                 </View>
                 <Switch value={false} disabled />
               </View>}
+
+          <Text style={acSt.section}>Timing Settings</Text>
           {form.expiry_reminders_enabled && (
             <>
               {timeField('expiry_reminder_time', 'Expiry Reminder Time')}
@@ -2787,6 +2900,38 @@ function AutomationConfigSection({ onClose }: { onClose: () => void }) {
     </View>
   );
 }
+
+const kbSt = StyleSheet.create({
+  container: { flex: 1, backgroundColor: Colors.background },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: Colors.border },
+  closeBtn: { padding: 4, marginRight: 8 },
+  headerTitle: { fontFamily: 'Inter_700Bold', fontSize: 18, color: Colors.text, flex: 1 },
+  saveBtn: { backgroundColor: Colors.primary, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10 },
+  saveBtnText: { fontFamily: 'Inter_600SemiBold', fontSize: 14, color: '#000' },
+  section: { fontFamily: 'Inter_700Bold', fontSize: 14, color: Colors.text, marginTop: 20, marginBottom: 8 },
+  field: { gap: 5, marginBottom: 12 },
+  label: { fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 },
+  input: { backgroundColor: Colors.card, borderRadius: 10, height: 44, paddingHorizontal: 12, fontFamily: 'Inter_400Regular', fontSize: 14, color: Colors.text, borderWidth: 1, borderColor: Colors.border },
+  row: { flexDirection: 'row', gap: 10 },
+  switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8 },
+  switchLabel: { fontFamily: 'Inter_500Medium', fontSize: 14, color: Colors.text },
+  infoBox: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: Colors.info + '10', borderRadius: 10, padding: 10, borderWidth: 1, borderColor: Colors.info + '30', marginBottom: 10 },
+  infoText: { fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.info, flex: 1, lineHeight: 17 },
+  // Plan styles
+  planCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.card, borderRadius: 10, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: Colors.border },
+  planName: { fontFamily: 'Inter_600SemiBold', fontSize: 14, color: Colors.text },
+  planMeta: { fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
+  planDesc: { fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted, marginTop: 2 },
+  planIconBtn: { padding: 6 },
+  planFormBox: { backgroundColor: Colors.card, borderRadius: 10, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: Colors.border },
+  addTagBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.primary, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14, marginTop: 10, gap: 4 },
+  addTagBtnText: { fontFamily: 'Inter_600SemiBold', fontSize: 13, color: '#000' },
+  // Facility tag styles
+  tagWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
+  tag: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.primaryMuted, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1, borderColor: Colors.primary + '40' },
+  tagText: { fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.primary },
+  tagInputRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+});
 
 const acSt = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
