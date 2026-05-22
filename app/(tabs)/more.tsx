@@ -64,7 +64,6 @@ export default function MoreScreen() {
     sections.push(
       { key: 'gym_analytics', label: 'Gym Analytics', icon: 'bar-chart-outline', color: Colors.info },
       { key: 'branches', label: 'Gym Branches', icon: 'map-outline', color: Colors.primary },
-      { key: 'modules', label: 'Modules & Pricing', icon: 'grid-outline', color: Colors.warning },
       { key: 'my_modules', label: 'Gym Modules', icon: 'layers-outline', color: Colors.purple },
       { key: 'whatsapp', label: 'WhatsApp', icon: 'logo-whatsapp', color: '#25D366' },
       { key: 'billing', label: 'Billing', icon: 'card-outline', color: Colors.info },
@@ -816,104 +815,92 @@ function ModulesSection({ onClose }: { onClose: () => void }) {
   const [modError, setModError] = useState("");
   const [toggling, setToggling] = useState<string | null>(null);
 
+  // Pricing calculator state
+  const META_MARKETING = 0.88;
+  const META_UTILITY   = 0.13;
+  const MGMT_FEE       = 99;
+  const [pricing, setPricing] = useState({
+    memberCount: '100',
+    broadcastsPerMonth: '1',
+    expiryReminders: true,
+    dietMessages: false,
+    clientPaysWhatsApp: true,
+  });
+
+  const calcTotal = () => {
+    const members = parseInt(pricing.memberCount) || 0;
+    const bcasts  = parseInt(pricing.broadcastsPerMonth) || 0;
+    const broadcast = pricing.clientPaysWhatsApp ? 0 : members * bcasts * META_MARKETING;
+    const expiry    = pricing.clientPaysWhatsApp ? 0 : (pricing.expiryReminders ? members * META_UTILITY : 0);
+    const diet      = pricing.clientPaysWhatsApp ? 0 : (pricing.dietMessages ? members * 30 * META_UTILITY : 0);
+    const metaTotal = Math.ceil(broadcast + expiry + diet);
+    return { broadcast: Math.ceil(broadcast), expiry: Math.ceil(expiry), diet: Math.ceil(diet), metaTotal };
+  };
+  const calc = calcTotal();
+  const totalToCharge = (gymPrice as number) + calc.metaTotal + MGMT_FEE;
+
   const enabledIds = new Set(
     gymModules.filter((gm: any) => gm.is_enabled).map((gm: any) => gm.module_id)
   );
 
-  const openAddForm = () => {
-    setEditingModId(null);
-    setModForm({ name: "", description: "", price: "" });
-    setModError("");
-    setShowAddForm(true);
-  };
-
-  const openEditForm = (mod: any) => {
-    setShowAddForm(false);
-    setEditingModId(mod.id);
-    setModForm({ name: mod.name, description: mod.description || "", price: String(mod.price || 0) });
-    setModError("");
-  };
-
-  const closeForm = () => {
-    setShowAddForm(false);
-    setEditingModId(null);
-    setModForm({ name: "", description: "", price: "" });
-    setModError("");
-  };
+  const openAddForm = () => { setEditingModId(null); setModForm({ name: "", description: "", price: "" }); setModError(""); setShowAddForm(true); };
+  const openEditForm = (mod: any) => { setShowAddForm(false); setEditingModId(mod.id); setModForm({ name: mod.name, description: mod.description || "", price: String(mod.price || 0) }); setModError(""); };
+  const closeForm = () => { setShowAddForm(false); setEditingModId(null); setModForm({ name: "", description: "", price: "" }); setModError(""); };
 
   const handleSave = () => {
     setModError("");
     if (!modForm.name.trim()) { setModError("Module name is required"); return; }
     const price = parseFloat(modForm.price) || 0;
     if (editingModId) {
-      updateModule.mutate(
-        { id: editingModId, name: modForm.name.trim(), description: modForm.description.trim() || undefined, price },
-        {
-          onSuccess: () => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); closeForm(); },
-          onError: (e: any) => setModError(e.message),
-        }
-      );
+      updateModule.mutate({ id: editingModId, name: modForm.name.trim(), description: modForm.description.trim() || undefined, price }, {
+        onSuccess: () => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); closeForm(); },
+        onError: (e: any) => setModError(e.message),
+      });
     } else {
-      insertModule.mutate(
-        { name: modForm.name.trim(), description: modForm.description.trim() || undefined, price },
-        {
-          onSuccess: () => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); closeForm(); },
-          onError: (e: any) => setModError(e.message),
-        }
-      );
+      insertModule.mutate({ name: modForm.name.trim(), description: modForm.description.trim() || undefined, price }, {
+        onSuccess: () => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); closeForm(); },
+        onError: (e: any) => setModError(e.message),
+      });
     }
   };
 
   const handleToggle = (moduleId: string, currentEnabled: boolean) => {
     if (!selectedGymId) return;
     setToggling(moduleId);
-    upsertModule.mutate(
-      { gym_id: selectedGymId, module_id: moduleId, is_enabled: !currentEnabled },
-      { onSuccess: () => setToggling(null), onError: () => setToggling(null) }
-    );
+    upsertModule.mutate({ gym_id: selectedGymId, module_id: moduleId, is_enabled: !currentEnabled }, {
+      onSuccess: () => setToggling(null), onError: () => setToggling(null)
+    });
   };
 
   const handleGenerateInvoice = () => {
-    if (!selectedGymId || (gymPrice as number) === 0) return;
+    if (!selectedGymId || totalToCharge === MGMT_FEE) return;
     const gym = gyms.find((g: any) => g.id === selectedGymId);
     const today2 = new Date().toISOString().split('T')[0];
-    const nextMonth2 = new Date();
-    nextMonth2.setMonth(nextMonth2.getMonth() + 1);
+    const nextMonth2 = new Date(); nextMonth2.setMonth(nextMonth2.getMonth() + 1);
     const endDate2 = nextMonth2.toISOString().split('T')[0];
-
-    autoInvoice.mutate(
-      {
-        gym_id: selectedGymId,
-        amount: gymPrice as number,
-        description: `Monthly subscription — ${enabledIds.size} module${enabledIds.size !== 1 ? "s" : ""} for ${gym?.name}`,
+    autoInvoice.mutate({
+      gym_id: selectedGymId,
+      amount: totalToCharge,
+      description: `Monthly — Modules ₹${gymPrice}${!pricing.clientPaysWhatsApp ? ` + WhatsApp ₹${calc.metaTotal}` : ' (Client pays WA)'} + Maintenance ₹${MGMT_FEE}`,
+    }, {
+      onSuccess: () => {
+        upsertSubscription.mutate({ gym_id: selectedGymId, plan: 'modules', amount: totalToCharge, start_date: today2, end_date: endDate2 });
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        Alert.alert("Invoice Generated", `₹${totalToCharge.toLocaleString("en-IN")} invoice created for ${gym?.name}\nPeriod: ${today2} → ${endDate2}`);
       },
-      {
-        onSuccess: () => {
-          upsertSubscription.mutate({
-            gym_id: selectedGymId, plan: 'modules',
-            amount: gymPrice as number, start_date: today2, end_date: endDate2,
-          });
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          Alert.alert("Invoice Generated", `Rs.${(gymPrice as number).toLocaleString("en-IN")} invoice created for ${gym?.name}`);
-        },
-        onError: (e: any) => Alert.alert("Error", e.message),
-      }
-    );
+      onError: (e: any) => Alert.alert("Error", e.message),
+    });
   };
 
   return (
     <View style={{ flex: 1, backgroundColor: Colors.background }}>
-      <SectionHeader title="Modules & Pricing" onClose={onClose} />
+      <SectionHeader title="Gym Modules" onClose={onClose} />
 
       <View style={{ flexDirection: "row", marginHorizontal: 16, marginTop: 12, backgroundColor: Colors.secondary, borderRadius: 10, padding: 4, borderWidth: 1, borderColor: Colors.border }}>
         {(["manage", "assign"] as const).map(t => (
-          <Pressable
-            key={t}
-            style={{ flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: "center", backgroundColor: activeTab === t ? Colors.primary : "transparent" }}
-            onPress={() => { setActiveTab(t); closeForm(); }}
-          >
+          <Pressable key={t} style={{ flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: "center", backgroundColor: activeTab === t ? Colors.primary : "transparent" }} onPress={() => { setActiveTab(t); closeForm(); }}>
             <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 13, color: activeTab === t ? "#000" : Colors.textSecondary }}>
-              {t === "manage" ? "Manage Modules" : "Assign to Gym"}
+              {t === "manage" ? "Manage Modules" : "Assign & Pricing"}
             </Text>
           </Pressable>
         ))}
@@ -921,23 +908,18 @@ function ModulesSection({ onClose }: { onClose: () => void }) {
 
       <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: insets.bottom + 20 }}>
 
+        {/* ── Manage Modules Tab ── */}
         {activeTab === "manage" && (
           <>
             {!showAddForm && !editingModId && (
-              <Pressable
-                style={{ flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: Colors.primaryMuted, borderRadius: 10, padding: 13, borderWidth: 1, borderColor: Colors.primary + "40" }}
-                onPress={openAddForm}
-              >
+              <Pressable style={{ flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: Colors.primaryMuted, borderRadius: 10, padding: 13, borderWidth: 1, borderColor: Colors.primary + "40" }} onPress={openAddForm}>
                 <Ionicons name="add-circle" size={18} color={Colors.primary} />
                 <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 14, color: Colors.primary, flex: 1 }}>Add New Module</Text>
               </Pressable>
             )}
-
             {(showAddForm || !!editingModId) && (
               <View style={section.formCard}>
-                <Text style={{ fontFamily: "Inter_700Bold", fontSize: 15, color: Colors.text, marginBottom: 12 }}>
-                  {editingModId ? "Edit Module" : "New Module"}
-                </Text>
+                <Text style={{ fontFamily: "Inter_700Bold", fontSize: 15, color: Colors.text, marginBottom: 12 }}>{editingModId ? "Edit Module" : "New Module"}</Text>
                 <TextInput style={section.input} placeholder="Module name *" placeholderTextColor={Colors.textMuted} value={modForm.name} onChangeText={v => setModForm(f => ({ ...f, name: v }))} />
                 <TextInput style={[section.input, { marginTop: 8 }]} placeholder="Description (optional)" placeholderTextColor={Colors.textMuted} value={modForm.description} onChangeText={v => setModForm(f => ({ ...f, description: v }))} />
                 <TextInput style={[section.input, { marginTop: 8 }]} placeholder="Price per month in rupees" placeholderTextColor={Colors.textMuted} keyboardType="numeric" value={modForm.price} onChangeText={v => setModForm(f => ({ ...f, price: v }))} />
@@ -952,7 +934,6 @@ function ModulesSection({ onClose }: { onClose: () => void }) {
                 </View>
               </View>
             )}
-
             {loadingModules ? <ActivityIndicator color={Colors.warning} /> : allModules.length === 0 ? (
               <View style={{ alignItems: "center", paddingVertical: 30 }}>
                 <Ionicons name="grid-outline" size={40} color={Colors.textMuted} />
@@ -966,18 +947,12 @@ function ModulesSection({ onClose }: { onClose: () => void }) {
                     <View style={{ flex: 1 }}>
                       <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 14, color: Colors.text }}>{mod.name}</Text>
                       {!!mod.description && <Text style={{ fontFamily: "Inter_400Regular", fontSize: 12, color: Colors.textSecondary, marginTop: 2 }}>{mod.description}</Text>}
-                      <Text style={{ fontFamily: "Inter_700Bold", fontSize: 13, color: Colors.primary, marginTop: 3 }}>Rs.{(mod.price || 0).toLocaleString("en-IN")}/mo</Text>
+                      <Text style={{ fontFamily: "Inter_700Bold", fontSize: 13, color: Colors.primary, marginTop: 3 }}>₹{(mod.price || 0).toLocaleString("en-IN")}/mo</Text>
                     </View>
-                    <Pressable
-                      onPress={() => editingModId === mod.id ? closeForm() : openEditForm(mod)}
-                      style={{ width: 34, height: 34, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: editingModId === mod.id ? Colors.primaryMuted : Colors.secondary, borderWidth: 1, borderColor: editingModId === mod.id ? Colors.primary + "40" : Colors.border }}
-                    >
+                    <Pressable onPress={() => editingModId === mod.id ? closeForm() : openEditForm(mod)} style={{ width: 34, height: 34, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: editingModId === mod.id ? Colors.primaryMuted : Colors.secondary, borderWidth: 1, borderColor: editingModId === mod.id ? Colors.primary + "40" : Colors.border }}>
                       <Ionicons name={editingModId === mod.id ? "close-outline" : "pencil-outline"} size={16} color={editingModId === mod.id ? Colors.primary : Colors.info} />
                     </Pressable>
-                    <Pressable
-                      onPress={() => deleteModule.mutate(mod.id)}
-                      style={{ width: 34, height: 34, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: Colors.dangerMuted, borderWidth: 1, borderColor: Colors.danger + "40" }}
-                    >
+                    <Pressable onPress={() => deleteModule.mutate(mod.id)} style={{ width: 34, height: 34, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: Colors.dangerMuted, borderWidth: 1, borderColor: Colors.danger + "40" }}>
                       <Ionicons name="trash-outline" size={16} color={Colors.danger} />
                     </Pressable>
                   </View>
@@ -987,10 +962,12 @@ function ModulesSection({ onClose }: { onClose: () => void }) {
           </>
         )}
 
+        {/* ── Assign & Pricing Tab ── */}
         {activeTab === "assign" && (
           <>
+            {/* Gym selector */}
             <View style={section.formCard}>
-              <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 13, color: Colors.textSecondary, marginBottom: 8 }}>Select a gym to assign modules</Text>
+              <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 13, color: Colors.textSecondary, marginBottom: 8 }}>Select Gym</Text>
               <GymPicker gyms={gyms} value={selectedGymId} onChange={setSelectedGymId} />
             </View>
 
@@ -1002,45 +979,111 @@ function ModulesSection({ onClose }: { onClose: () => void }) {
             ) : allModules.length === 0 ? (
               <Text style={section.empty}>No modules configured. Go to Manage Modules tab first.</Text>
             ) : loadingGymModules ? <ActivityIndicator color={Colors.primary} /> : (
-              <View style={section.card}>
-                <Text style={analytics.sectionTitle}>Toggle modules for this gym</Text>
-                {allModules.map((mod: any) => {
-                  const isEnabled = enabledIds.has(mod.id);
-                  const isTogglingThis = toggling === mod.id;
-                  return (
-                    <Pressable
-                      key={mod.id}
-                      style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: Colors.border, opacity: isTogglingThis ? 0.6 : 1 }}
-                      onPress={() => handleToggle(mod.id, isEnabled)}
-                      disabled={isTogglingThis}
-                    >
-                      <View style={{ width: 36, height: 36, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: isEnabled ? Colors.primaryMuted : Colors.secondary, borderWidth: 1.5, borderColor: isEnabled ? Colors.primary : Colors.border }}>
-                        {isTogglingThis ? <ActivityIndicator size="small" color={Colors.primary} /> : <Ionicons name={isEnabled ? "checkmark-circle" : "ellipse-outline"} size={20} color={isEnabled ? Colors.primary : Colors.textMuted} />}
+              <>
+                {/* Module toggles */}
+                <View style={section.card}>
+                  <Text style={analytics.sectionTitle}>Assign Modules</Text>
+                  {allModules.map((mod: any) => {
+                    const isEnabled = enabledIds.has(mod.id);
+                    const isTogglingThis = toggling === mod.id;
+                    return (
+                      <Pressable key={mod.id} style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: Colors.border, opacity: isTogglingThis ? 0.6 : 1 }} onPress={() => handleToggle(mod.id, isEnabled)} disabled={isTogglingThis}>
+                        <View style={{ width: 36, height: 36, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: isEnabled ? Colors.primaryMuted : Colors.secondary, borderWidth: 1.5, borderColor: isEnabled ? Colors.primary : Colors.border }}>
+                          {isTogglingThis ? <ActivityIndicator size="small" color={Colors.primary} /> : <Ionicons name={isEnabled ? "checkmark-circle" : "ellipse-outline"} size={20} color={isEnabled ? Colors.primary : Colors.textMuted} />}
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 14, color: Colors.text }}>{mod.name}</Text>
+                          <Text style={{ fontFamily: "Inter_400Regular", fontSize: 12, color: isEnabled ? Colors.primary : Colors.textMuted }}>₹{(mod.price || 0).toLocaleString("en-IN")}/mo — {isEnabled ? "Enabled" : "Disabled"}</Text>
+                        </View>
+                        <Ionicons name={isEnabled ? "toggle" : "toggle-outline"} size={28} color={isEnabled ? Colors.primary : Colors.textMuted} />
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                {/* Pricing Calculator */}
+                <View style={[section.card, { gap: 10 }]}>
+                  <Text style={analytics.sectionTitle}>Pricing Calculator</Text>
+
+                  {/* Credit card toggle */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: pricing.clientPaysWhatsApp ? '#22C55E15' : Colors.warning + '15', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: pricing.clientPaysWhatsApp ? '#22C55E40' : Colors.warning + '40' }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: pricing.clientPaysWhatsApp ? '#22C55E' : Colors.warning }}>
+                        {pricing.clientPaysWhatsApp ? '✅ Client pays WhatsApp (their card on Meta)' : '⚠️ You pay WhatsApp charges'}
+                      </Text>
+                      <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted, marginTop: 2 }}>
+                        {pricing.clientPaysWhatsApp ? 'You only charge modules + maintenance' : 'Meta charges added to client bill'}
+                      </Text>
+                    </View>
+                    <Switch value={pricing.clientPaysWhatsApp} onValueChange={v => setPricing(p => ({ ...p, clientPaysWhatsApp: v }))} trackColor={{ true: '#22C55E', false: Colors.warning }} />
+                  </View>
+
+                  {/* Meta inputs — only if you pay */}
+                  {!pricing.clientPaysWhatsApp && (
+                    <>
+                      <View style={{ flexDirection: 'row', gap: 10 }}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.textMuted, marginBottom: 4 }}>Members</Text>
+                          <TextInput style={section.input} value={pricing.memberCount} onChangeText={v => setPricing(p => ({ ...p, memberCount: v }))} keyboardType="numeric" placeholder="100" placeholderTextColor={Colors.textMuted} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.textMuted, marginBottom: 4 }}>Broadcasts/Month</Text>
+                          <TextInput style={section.input} value={pricing.broadcastsPerMonth} onChangeText={v => setPricing(p => ({ ...p, broadcastsPerMonth: v }))} keyboardType="numeric" placeholder="1" placeholderTextColor={Colors.textMuted} />
+                        </View>
                       </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 14, color: Colors.text }}>{mod.name}</Text>
-                        <Text style={{ fontFamily: "Inter_400Regular", fontSize: 12, color: isEnabled ? Colors.primary : Colors.textMuted }}>
-                          Rs.{(mod.price || 0).toLocaleString("en-IN")}/mo — {isEnabled ? "Enabled" : "Disabled"}
-                        </Text>
+                      {[
+                        { key: 'expiryReminders', label: 'Expiry Reminders', sub: `₹0.13/member → ₹${Math.ceil((parseInt(pricing.memberCount)||0)*0.13)}/mo` },
+                        { key: 'dietMessages', label: 'Diet Messages (daily)', sub: `₹0.13×30 → ₹${Math.ceil((parseInt(pricing.memberCount)||0)*3.9)}/mo` },
+                      ].map(t => (
+                        <View key={t.key} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderTopWidth: 1, borderTopColor: Colors.border }}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>{t.label}</Text>
+                            <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>{t.sub}</Text>
+                          </View>
+                          <Switch value={(pricing as any)[t.key]} onValueChange={v => setPricing(p => ({ ...p, [t.key]: v }))} trackColor={{ true: Colors.primary }} />
+                        </View>
+                      ))}
+                    </>
+                  )}
+
+                  {/* Breakdown */}
+                  <View style={{ backgroundColor: Colors.background, borderRadius: 10, padding: 12, borderWidth: 1, borderColor: Colors.border, gap: 6 }}>
+                    <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 11, color: Colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Monthly Breakdown</Text>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                      <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary }}>Modules ({enabledIds.size} enabled)</Text>
+                      <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>₹{(gymPrice as number).toLocaleString('en-IN')}</Text>
+                    </View>
+                    {!pricing.clientPaysWhatsApp && calc.metaTotal > 0 && (
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                        <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary }}>WhatsApp (Meta)</Text>
+                        <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>₹{calc.metaTotal}</Text>
                       </View>
-                      <Ionicons name={isEnabled ? "toggle" : "toggle-outline"} size={28} color={isEnabled ? Colors.primary : Colors.textMuted} />
-                    </Pressable>
-                  );
-                })}
-                <View style={{ marginTop: 14, backgroundColor: enabledIds.size > 0 ? Colors.primaryMuted : Colors.secondary, borderRadius: 12, padding: 16, borderWidth: 1, borderColor: enabledIds.size > 0 ? Colors.primary + "40" : Colors.border }}>
-                  <Text style={{ fontFamily: "Inter_400Regular", fontSize: 13, color: Colors.textSecondary }}>{enabledIds.size} of {allModules.length} modules enabled</Text>
-                  <Text style={{ fontFamily: "Inter_700Bold", fontSize: 26, color: enabledIds.size > 0 ? Colors.primary : Colors.textMuted, marginVertical: 4 }}>
-                    Rs.{(gymPrice as number).toLocaleString("en-IN")}<Text style={{ fontFamily: "Inter_400Regular", fontSize: 13, color: Colors.textSecondary }}>/month</Text>
-                  </Text>
+                    )}
+                    {pricing.clientPaysWhatsApp && (
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                        <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: '#22C55E' }}>WhatsApp (Meta)</Text>
+                        <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: '#22C55E' }}>Client pays</Text>
+                      </View>
+                    )}
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                      <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary }}>Maintenance</Text>
+                      <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>₹{MGMT_FEE}</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: Colors.border, paddingTop: 8, marginTop: 4 }}>
+                      <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 15, color: Colors.text }}>You Charge / Month</Text>
+                      <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 22, color: Colors.primary }}>₹{totalToCharge.toLocaleString('en-IN')}</Text>
+                    </View>
+                  </View>
+
                   <Pressable
-                    style={[section.submitBtn, { opacity: (gymPrice as number) === 0 || autoInvoice.isPending ? 0.5 : 1 }]}
+                    style={[section.submitBtn, { opacity: autoInvoice.isPending ? 0.6 : 1 }]}
                     onPress={handleGenerateInvoice}
-                    disabled={(gymPrice as number) === 0 || autoInvoice.isPending}
+                    disabled={autoInvoice.isPending}
                   >
                     {autoInvoice.isPending ? <ActivityIndicator color="#000" /> : <><Ionicons name="receipt-outline" size={16} color="#000" /><Text style={section.submitBtnText}>Generate Invoice</Text></>}
                   </Pressable>
                 </View>
-              </View>
+              </>
             )}
           </>
         )}
@@ -1049,219 +1092,16 @@ function ModulesSection({ onClose }: { onClose: () => void }) {
   );
 }
 
-// ─── WHATSAPP SECTION ─────────────────────────────────────────────────────────
-const WA_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  sent: { label: 'Sent', color: Colors.primary },
-  delivered: { label: 'Delivered', color: Colors.info },
-  failed: { label: 'Failed', color: Colors.danger },
-  pending: { label: 'Pending', color: Colors.warning },
-  processing: { label: 'Processing', color: Colors.info },
+// ─── WHATSAPP OWNER SECTION ───────────────────────────────────────────────────
+const TRIGGER_LABEL: Record<string, { label: string; desc: string; tag: string; tagColor: string }> = {
+  '3_days_before': { label: '3 Days Before Expiry', desc: 'Sent automatically at 9 AM, 3 days before membership expires', tag: 'Day -3', tagColor: Colors.info },
+  '1_day_before': { label: '1 Day Before Expiry', desc: 'Sent automatically at 9 AM, 1 day before membership expires', tag: 'Day -1', tagColor: Colors.warning },
+  'expiry_day': { label: 'On Expiry Day', desc: 'Sent automatically at 9 AM on the expiry date', tag: 'Day 0', tagColor: Colors.danger },
+  'day_-3': { label: '3 Days Before Expiry', desc: 'Sent 3 days before membership expires', tag: 'Day -3', tagColor: Colors.info },
+  'day_-1': { label: '1 Day Before Expiry', desc: 'Sent 1 day before membership expires', tag: 'Day -1', tagColor: Colors.warning },
+  'day_0': { label: 'On Expiry Day', desc: 'Sent on the expiry date', tag: 'Day 0', tagColor: Colors.danger },
 };
 
-const WA_CONN_MAP: Record<string, { label: string; color: string }> = {
-  connected: { label: 'Connected', color: Colors.primary },
-  connecting: { label: 'Connecting', color: Colors.warning },
-  disconnected: { label: 'Disconnected', color: Colors.danger },
-};
-
-
-function WhatsAppSection({ onClose }: { onClose: () => void }) {
-  const insets = useSafeAreaInsets();
-  const { user } = useAuth();
-  const qc = useQueryClient();
-  const { data: gyms = [] } = useGyms();
-  const { data: logs = [], isLoading: loadingLogs } = useWhatsappLogs();
-  const [tab, setTab] = useState<'setup' | 'logs'>('setup');
-  const [editingGymId, setEditingGymId] = useState<string | null>(null);
-  const [waForm, setWaForm] = useState({ whatsapp_number: '', whatsapp_phone_id: '', whatsapp_token: '', auto_reply_message: '' });
-  const [saving, setSaving] = useState(false);
-  const [saveMsgMap, setSaveMsgMap] = useState<Record<string, string>>({});
-
-  const handleSaveWA = async (gymId: string) => {
-    setSaving(true);
-    setSaveMsgMap(prev => ({ ...prev, [gymId]: '' }));
-    const { error } = await supabase.from('gyms').update({
-      whatsapp_number: waForm.whatsapp_number || null,
-      whatsapp_phone_id: waForm.whatsapp_phone_id || null,
-      whatsapp_token: waForm.whatsapp_token || null,
-      auto_reply_message: waForm.auto_reply_message || null,
-    }).eq('id', gymId);
-    setSaving(false);
-    if (error) {
-      setSaveMsgMap(prev => ({ ...prev, [gymId]: 'Error: ' + error.message }));
-    } else {
-      setSaveMsgMap(prev => ({ ...prev, [gymId]: '✅ Saved successfully!' }));
-      // Invalidate gyms cache so the status badge refreshes immediately
-      await qc.invalidateQueries({ queryKey: ['gyms'] });
-      // Keep form open for 1.5s so user sees success, then close
-      setTimeout(() => setEditingGymId(null), 1500);
-    }
-  };
-
-  return (
-    <View style={{ flex: 1, backgroundColor: Colors.background }}>
-      <SectionHeader title="WhatsApp Setup" onClose={onClose} />
-
-      {/* Tab selector */}
-      <View style={{ flexDirection: 'row', margin: 16, backgroundColor: Colors.secondary, borderRadius: 12, padding: 4 }}>
-        {(['setup', 'logs'] as const).map(t => (
-          <Pressable
-            key={t}
-            style={[{ flex: 1, paddingVertical: 10, borderRadius: 9, alignItems: 'center' },
-              tab === t && { backgroundColor: Colors.card }]}
-            onPress={() => setTab(t)}
-          >
-            <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13,
-              color: tab === t ? Colors.primary : Colors.textMuted }}>
-              {t === 'setup' ? 'Setup' : 'Message Logs'}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
-
-      {tab === 'setup' && (
-        <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }}>
-          {/* Info box */}
-          <View style={{ backgroundColor: Colors.info + '15', borderRadius: 12, padding: 14,
-            borderWidth: 1, borderColor: Colors.info + '40', flexDirection: 'row', gap: 10 }}>
-            <Ionicons name="information-circle-outline" size={18} color={Colors.info} />
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: Colors.info }}>
-                Meta WhatsApp API Setup
-              </Text>
-              <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.textSecondary, marginTop: 4, lineHeight: 18 }}>
-                Each gym needs a WhatsApp Business number added to your Meta account. Contact Zenvik AI to add a number.
-              </Text>
-            </View>
-          </View>
-
-          {gyms.map((gym: any) => (
-            <View key={gym.id} style={{ backgroundColor: Colors.card, borderRadius: 14, padding: 16,
-              borderWidth: 1, borderColor: Colors.border }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 15, color: Colors.text }}>{gym.name}</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                    <View style={{ width: 8, height: 8, borderRadius: 4,
-                      backgroundColor: gym.whatsapp_phone_id ? Colors.primary : Colors.danger }} />
-                    <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12,
-                      color: gym.whatsapp_phone_id ? Colors.primary : Colors.danger }}>
-                      {gym.whatsapp_phone_id ? 'Connected' : 'Not configured'}
-                    </Text>
-                  </View>
-                </View>
-                <Pressable
-                  onPress={() => {
-                    setEditingGymId(editingGymId === gym.id ? null : gym.id);
-                    setWaForm({
-                      whatsapp_number: gym.whatsapp_number || '',
-                      whatsapp_phone_id: gym.whatsapp_phone_id || '',
-                      whatsapp_token: gym.whatsapp_token || '',
-                      auto_reply_message: gym.auto_reply_message || '',
-                    });
-                    setSaveMsgMap(prev => ({ ...prev, [gym.id]: '' }));
-                  }}
-                  style={{ backgroundColor: Colors.primaryMuted, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 }}
-                >
-                  <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 12, color: Colors.primary }}>
-                    {editingGymId === gym.id ? 'Cancel' : 'Configure'}
-                  </Text>
-                </Pressable>
-              </View>
-
-              {gym.whatsapp_phone_id && (
-                <View style={{ gap: 4 }}>
-                  <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.textMuted }}>
-                    Number: {gym.whatsapp_number || 'Not set'}
-                  </Text>
-                  <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.textMuted }}>
-                    Phone ID: {gym.whatsapp_phone_id}
-                  </Text>
-                </View>
-              )}
-
-              {editingGymId === gym.id && (
-                <View style={{ marginTop: 12, gap: 10 }}>
-                  {[
-                    { key: 'whatsapp_number', label: 'WhatsApp Number', placeholder: '+91 98765 43210' },
-                    { key: 'whatsapp_phone_id', label: 'Phone Number ID (from Meta)', placeholder: '1234567890' },
-                    { key: 'whatsapp_token', label: 'WhatsApp API Token (from Meta)', placeholder: 'EAAxxxxx...' },
-                    { key: 'auto_reply_message', label: 'Auto-reply Message (optional)', placeholder: 'Hi! Thanks for contacting us...' },
-                  ].map(f => (
-                    <View key={f.key}>
-                      <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.textMuted,
-                        textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>{f.label}</Text>
-                      <TextInput
-                        style={{ backgroundColor: Colors.secondary, borderRadius: 10, height: 44,
-                          paddingHorizontal: 12, fontFamily: 'Inter_400Regular', fontSize: 14,
-                          color: Colors.text, borderWidth: 1, borderColor: Colors.border }}
-                        placeholder={f.placeholder}
-                        placeholderTextColor={Colors.textMuted}
-                        value={(waForm as any)[f.key]}
-                        onChangeText={v => setWaForm(p => ({ ...p, [f.key]: v }))}
-                      />
-                    </View>
-                  ))}
-                  {!!saveMsgMap[gym.id] && (
-                    <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13,
-                      color: saveMsgMap[gym.id].startsWith('✅') ? Colors.primary : Colors.danger }}>{saveMsgMap[gym.id]}</Text>
-                  )}
-                  <Pressable
-                    style={{ backgroundColor: Colors.primary, borderRadius: 10, height: 44,
-                      alignItems: 'center', justifyContent: 'center', opacity: saving ? 0.6 : 1 }}
-                    onPress={() => handleSaveWA(gym.id)}
-                    disabled={saving}
-                  >
-                    {saving ? <ActivityIndicator color="#000" /> :
-                      <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 14, color: '#000' }}>Save Configuration</Text>
-                    }
-                  </Pressable>
-                </View>
-              )}
-            </View>
-          ))}
-        </ScrollView>
-      )}
-
-      {tab === 'logs' && (
-        <ScrollView contentContainerStyle={{ padding: 16, gap: 10 }}>
-          {loadingLogs ? <ActivityIndicator color={Colors.primary} /> :
-            logs.length === 0 ? (
-              <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-                <Ionicons name="chatbubble-outline" size={40} color={Colors.textMuted} />
-                <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 15, color: Colors.textMuted, marginTop: 12 }}>
-                  No message logs yet
-                </Text>
-              </View>
-            ) : logs.map((log: any) => (
-              <View key={log.id} style={{ backgroundColor: Colors.card, borderRadius: 12, padding: 14,
-                borderWidth: 1, borderColor: Colors.border }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
-                  <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: Colors.text }}>
-                    {log.sender_name || 'System'}
-                  </Text>
-                  <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>
-                    {new Date(log.created_at).toLocaleDateString('en-IN')}
-                  </Text>
-                </View>
-                <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary }}>
-                  {log.message}
-                </Text>
-              </View>
-            ))
-          }
-        </ScrollView>
-      )}
-    </View>
-  );
-}
-
-
-const INV_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  pending:  { label: 'Pending',  color: Colors.warning },
-  paid:     { label: 'Paid',     color: Colors.primary },
-  overdue:  { label: 'Overdue',  color: Colors.danger  },
-};
 
 function BillingSection({ onClose }: { onClose: () => void }) {
   const insets = useSafeAreaInsets();
@@ -1316,34 +1156,30 @@ function BillingSection({ onClose }: { onClose: () => void }) {
 
   const handleAutoGenerate = async (gym: any) => {
     setGenerating(gym.id);
-    // Get enabled modules price for this gym
     const { data: gymMods } = await supabase
       .from('gym_modules')
       .select('is_enabled, module:modules(price)')
       .eq('gym_id', gym.id)
       .eq('is_enabled', true);
-    const total = (gymMods ?? []).reduce((sum: number, gm: any) => sum + (gm.module?.price ?? 0), 0);
-    if (total === 0) {
-      Alert.alert('No Modules', `${gym.name} has no enabled modules. Enable modules first to auto-generate an invoice.`);
-      setGenerating(null);
-      return;
-    }
+    const modulesTotal = (gymMods ?? []).reduce((sum: number, gm: any) => sum + (gm.module?.price ?? 0), 0);
+    const MGMT = 99;
+    const total = modulesTotal + MGMT;
     const today = new Date().toISOString().split('T')[0];
     const nextMonth = new Date();
     nextMonth.setMonth(nextMonth.getMonth() + 1);
     const endDate = nextMonth.toISOString().split('T')[0];
 
     autoInvoice.mutate(
-      { gym_id: gym.id, amount: total, description: `Monthly subscription — enabled modules` },
+      {
+        gym_id: gym.id,
+        amount: total,
+        description: `Monthly — Modules ₹${modulesTotal} + Maintenance ₹${MGMT}`,
+      },
       {
         onSuccess: () => {
-          // Also record subscription dates
-          upsertSubscription.mutate({
-            gym_id: gym.id, plan: 'modules',
-            amount: total, start_date: today, end_date: endDate,
-          });
+          upsertSubscription.mutate({ gym_id: gym.id, plan: 'modules', amount: total, start_date: today, end_date: endDate });
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          Alert.alert('Invoice Created', `Rs.${total.toLocaleString('en-IN')} invoice for ${gym.name}\nSubscription: ${today} → ${endDate}`);
+          Alert.alert('Invoice Created', `₹${total.toLocaleString('en-IN')} invoice for ${gym.name}\n\nModules: ₹${modulesTotal}\nMaintenance: ₹${MGMT}\n\nPeriod: ${today} → ${endDate}`);
           setGenerating(null);
         },
         onError: (e: any) => { Alert.alert('Error', e.message); setGenerating(null); },
@@ -1487,15 +1323,6 @@ function BillingSection({ onClose }: { onClose: () => void }) {
     </View>
   );
 }
-// ─── WHATSAPP OWNER SECTION ───────────────────────────────────────────────────
-const TRIGGER_LABEL: Record<string, { label: string; desc: string; tag: string; tagColor: string }> = {
-  '3_days_before': { label: '3 Days Before Expiry', desc: 'Sent automatically at 9 AM, 3 days before membership expires', tag: 'Day -3', tagColor: Colors.info },
-  '1_day_before': { label: '1 Day Before Expiry', desc: 'Sent automatically at 9 AM, 1 day before membership expires', tag: 'Day -1', tagColor: Colors.warning },
-  'expiry_day': { label: 'On Expiry Day', desc: 'Sent automatically at 9 AM on the expiry date', tag: 'Day 0', tagColor: Colors.danger },
-  'day_-3': { label: '3 Days Before Expiry', desc: 'Sent 3 days before membership expires', tag: 'Day -3', tagColor: Colors.info },
-  'day_-1': { label: '1 Day Before Expiry', desc: 'Sent 1 day before membership expires', tag: 'Day -1', tagColor: Colors.warning },
-  'day_0': { label: 'On Expiry Day', desc: 'Sent on the expiry date', tag: 'Day 0', tagColor: Colors.danger },
-};
 
 function getTriggerMeta(type: string) {
   return TRIGGER_LABEL[type] ?? { label: type, desc: 'Automated trigger', tag: type.toUpperCase(), tagColor: Colors.textMuted };
