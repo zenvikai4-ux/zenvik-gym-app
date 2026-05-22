@@ -170,7 +170,7 @@ export default function MoreScreen() {
         <ModulesSection onClose={() => setActiveSection(null)} />
       </Modal>
       <Modal visible={activeSection === 'whatsapp'} animationType="slide" onRequestClose={() => setActiveSection(null)}>
-        <WhatsAppSection onClose={() => setActiveSection(null)} />
+        <WhatsAppOwnerSection onClose={() => setActiveSection(null)} />
       </Modal>
       <Modal visible={activeSection === 'billing'} animationType="slide" onRequestClose={() => setActiveSection(null)}>
         <BillingSection onClose={() => setActiveSection(null)} />
