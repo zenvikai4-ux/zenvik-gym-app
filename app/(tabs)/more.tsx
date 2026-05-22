@@ -23,6 +23,7 @@ import {
   useAutoInvoice, useGymModulePrice, useInsertNotification, useLatestInvoice, useUpsertGymSubscription,
   useGymKnowledge, useUpsertGymKnowledge,
   useGymAutomationConfig, useUpsertGymAutomationConfig,
+  useEnabledModules,
 } from '@/lib/hooks';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ConfirmModal } from '@/components/ConfirmModal';
@@ -815,24 +816,25 @@ function ModulesSection({ onClose }: { onClose: () => void }) {
   const [modError, setModError] = useState("");
   const [toggling, setToggling] = useState<string | null>(null);
 
-  // Pricing calculator state
+  // Broadcast config per gym
   const META_MARKETING = 0.88;
   const META_UTILITY   = 0.13;
   const MGMT_FEE       = 99;
-  const [pricing, setPricing] = useState({
-    memberCount: '100',
+
+  const [broadcastConfig, setBroadcastConfig] = useState({
     broadcastsPerMonth: '1',
+    memberCount: '100',
+    clientPaysWhatsApp: true,
     expiryReminders: true,
     dietMessages: false,
-    clientPaysWhatsApp: true,
   });
 
   const calcTotal = () => {
-    const members = parseInt(pricing.memberCount) || 0;
-    const bcasts  = parseInt(pricing.broadcastsPerMonth) || 0;
-    const broadcast = pricing.clientPaysWhatsApp ? 0 : members * bcasts * META_MARKETING;
-    const expiry    = pricing.clientPaysWhatsApp ? 0 : (pricing.expiryReminders ? members * META_UTILITY : 0);
-    const diet      = pricing.clientPaysWhatsApp ? 0 : (pricing.dietMessages ? members * 30 * META_UTILITY : 0);
+    const members = parseInt(broadcastConfig.memberCount) || 0;
+    const bcasts  = parseInt(broadcastConfig.broadcastsPerMonth) || 0;
+    const broadcast = broadcastConfig.clientPaysWhatsApp ? 0 : members * bcasts * META_MARKETING;
+    const expiry    = broadcastConfig.clientPaysWhatsApp ? 0 : (broadcastConfig.expiryReminders ? members * META_UTILITY : 0);
+    const diet      = broadcastConfig.clientPaysWhatsApp ? 0 : (broadcastConfig.dietMessages ? members * 30 * META_UTILITY : 0);
     const metaTotal = Math.ceil(broadcast + expiry + diet);
     return { broadcast: Math.ceil(broadcast), expiry: Math.ceil(expiry), diet: Math.ceil(diet), metaTotal };
   };
@@ -881,7 +883,7 @@ function ModulesSection({ onClose }: { onClose: () => void }) {
     autoInvoice.mutate({
       gym_id: selectedGymId,
       amount: totalToCharge,
-      description: `Monthly — Modules ₹${gymPrice}${!pricing.clientPaysWhatsApp ? ` + WhatsApp ₹${calc.metaTotal}` : ' (Client pays WA)'} + Maintenance ₹${MGMT_FEE}`,
+      description: `Monthly — Modules ₹${gymPrice}${!broadcastConfig.clientPaysWhatsApp ? ` + WhatsApp ₹${calc.metaTotal}` : ' (Client pays WA)'} + Maintenance ₹${MGMT_FEE}`,
     }, {
       onSuccess: () => {
         upsertSubscription.mutate({ gym_id: selectedGymId, plan: 'modules', amount: totalToCharge, start_date: today2, end_date: endDate2 });
@@ -1001,46 +1003,86 @@ function ModulesSection({ onClose }: { onClose: () => void }) {
                   })}
                 </View>
 
+                {/* Broadcast Config */}
+                <View style={[section.card, { gap: 10 }]}>
+                  <Text style={analytics.sectionTitle}>WhatsApp Configuration</Text>
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.textMuted, marginBottom: 4 }}>Member Count</Text>
+                      <TextInput style={section.input} value={broadcastConfig.memberCount} onChangeText={v => setBroadcastConfig(p => ({ ...p, memberCount: v }))} keyboardType="numeric" placeholder="100" placeholderTextColor={Colors.textMuted} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.textMuted, marginBottom: 4 }}>Broadcasts/Month</Text>
+                      <TextInput style={section.input} value={broadcastConfig.broadcastsPerMonth} onChangeText={v => setBroadcastConfig(p => ({ ...p, broadcastsPerMonth: v }))} keyboardType="numeric" placeholder="1" placeholderTextColor={Colors.textMuted} />
+                    </View>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderTopWidth: 1, borderTopColor: Colors.border }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>Client pays WhatsApp (card on Meta)</Text>
+                      <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>Toggle off if you bear the Meta charges</Text>
+                    </View>
+                    <Switch value={broadcastConfig.clientPaysWhatsApp} onValueChange={v => setBroadcastConfig(p => ({ ...p, clientPaysWhatsApp: v }))} trackColor={{ true: '#22C55E', false: Colors.warning }} />
+                  </View>
+                  {!broadcastConfig.clientPaysWhatsApp && (
+                    <>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderTopWidth: 1, borderTopColor: Colors.border }}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>Expiry Reminders</Text>
+                          <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>₹0.13/member/reminder</Text>
+                        </View>
+                        <Switch value={broadcastConfig.expiryReminders} onValueChange={v => setBroadcastConfig(p => ({ ...p, expiryReminders: v }))} trackColor={{ true: Colors.primary }} />
+                      </View>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderTopWidth: 1, borderTopColor: Colors.border }}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>Diet Messages (daily)</Text>
+                          <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>₹0.13 × 30 days/member</Text>
+                        </View>
+                        <Switch value={broadcastConfig.dietMessages} onValueChange={v => setBroadcastConfig(p => ({ ...p, dietMessages: v }))} trackColor={{ true: Colors.primary }} />
+                      </View>
+                    </>
+                  )}
+                </View>
+
                 {/* Pricing Calculator */}
                 <View style={[section.card, { gap: 10 }]}>
                   <Text style={analytics.sectionTitle}>Pricing Calculator</Text>
 
                   {/* Credit card toggle */}
-                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: pricing.clientPaysWhatsApp ? '#22C55E15' : Colors.warning + '15', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: pricing.clientPaysWhatsApp ? '#22C55E40' : Colors.warning + '40' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: broadcastConfig.clientPaysWhatsApp ? '#22C55E15' : Colors.warning + '15', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: broadcastConfig.clientPaysWhatsApp ? '#22C55E40' : Colors.warning + '40' }}>
                     <View style={{ flex: 1 }}>
-                      <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: pricing.clientPaysWhatsApp ? '#22C55E' : Colors.warning }}>
-                        {pricing.clientPaysWhatsApp ? '✅ Client pays WhatsApp (their card on Meta)' : '⚠️ You pay WhatsApp charges'}
+                      <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: broadcastConfig.clientPaysWhatsApp ? '#22C55E' : Colors.warning }}>
+                        {broadcastConfig.clientPaysWhatsApp ? '✅ Client pays WhatsApp (their card on Meta)' : '⚠️ You pay WhatsApp charges'}
                       </Text>
                       <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted, marginTop: 2 }}>
-                        {pricing.clientPaysWhatsApp ? 'You only charge modules + maintenance' : 'Meta charges added to client bill'}
+                        {broadcastConfig.clientPaysWhatsApp ? 'You only charge modules + maintenance' : 'Meta charges added to client bill'}
                       </Text>
                     </View>
-                    <Switch value={pricing.clientPaysWhatsApp} onValueChange={v => setPricing(p => ({ ...p, clientPaysWhatsApp: v }))} trackColor={{ true: '#22C55E', false: Colors.warning }} />
+                    <Switch value={broadcastConfig.clientPaysWhatsApp} onValueChange={v => setBroadcastConfig(p => ({ ...p, clientPaysWhatsApp: v }))} trackColor={{ true: '#22C55E', false: Colors.warning }} />
                   </View>
 
                   {/* Meta inputs — only if you pay */}
-                  {!pricing.clientPaysWhatsApp && (
+                  {!broadcastConfig.clientPaysWhatsApp && (
                     <>
                       <View style={{ flexDirection: 'row', gap: 10 }}>
                         <View style={{ flex: 1 }}>
                           <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.textMuted, marginBottom: 4 }}>Members</Text>
-                          <TextInput style={section.input} value={pricing.memberCount} onChangeText={v => setPricing(p => ({ ...p, memberCount: v }))} keyboardType="numeric" placeholder="100" placeholderTextColor={Colors.textMuted} />
+                          <TextInput style={section.input} value={broadcastConfig.memberCount} onChangeText={v => setBroadcastConfig(p => ({ ...p, memberCount: v }))} keyboardType="numeric" placeholder="100" placeholderTextColor={Colors.textMuted} />
                         </View>
                         <View style={{ flex: 1 }}>
                           <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.textMuted, marginBottom: 4 }}>Broadcasts/Month</Text>
-                          <TextInput style={section.input} value={pricing.broadcastsPerMonth} onChangeText={v => setPricing(p => ({ ...p, broadcastsPerMonth: v }))} keyboardType="numeric" placeholder="1" placeholderTextColor={Colors.textMuted} />
+                          <TextInput style={section.input} value={broadcastConfig.broadcastsPerMonth} onChangeText={v => setBroadcastConfig(p => ({ ...p, broadcastsPerMonth: v }))} keyboardType="numeric" placeholder="1" placeholderTextColor={Colors.textMuted} />
                         </View>
                       </View>
                       {[
-                        { key: 'expiryReminders', label: 'Expiry Reminders', sub: `₹0.13/member → ₹${Math.ceil((parseInt(pricing.memberCount)||0)*0.13)}/mo` },
-                        { key: 'dietMessages', label: 'Diet Messages (daily)', sub: `₹0.13×30 → ₹${Math.ceil((parseInt(pricing.memberCount)||0)*3.9)}/mo` },
+                        { key: 'expiryReminders', label: 'Expiry Reminders', sub: `₹0.13/member → ₹${Math.ceil((parseInt(broadcastConfig.memberCount)||0)*0.13)}/mo` },
+                        { key: 'dietMessages', label: 'Diet Messages (daily)', sub: `₹0.13×30 → ₹${Math.ceil((parseInt(broadcastConfig.memberCount)||0)*3.9)}/mo` },
                       ].map(t => (
                         <View key={t.key} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderTopWidth: 1, borderTopColor: Colors.border }}>
                           <View style={{ flex: 1 }}>
                             <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>{t.label}</Text>
                             <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>{t.sub}</Text>
                           </View>
-                          <Switch value={(pricing as any)[t.key]} onValueChange={v => setPricing(p => ({ ...p, [t.key]: v }))} trackColor={{ true: Colors.primary }} />
+                          <Switch value={(broadcastConfig as any)[t.key]} onValueChange={v => setBroadcastConfig(p => ({ ...p, [t.key]: v }))} trackColor={{ true: Colors.primary }} />
                         </View>
                       ))}
                     </>
@@ -1053,13 +1095,13 @@ function ModulesSection({ onClose }: { onClose: () => void }) {
                       <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary }}>Modules ({enabledIds.size} enabled)</Text>
                       <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>₹{(gymPrice as number).toLocaleString('en-IN')}</Text>
                     </View>
-                    {!pricing.clientPaysWhatsApp && calc.metaTotal > 0 && (
+                    {!broadcastConfig.clientPaysWhatsApp && calc.metaTotal > 0 && (
                       <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                         <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary }}>WhatsApp (Meta)</Text>
                         <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>₹{calc.metaTotal}</Text>
                       </View>
                     )}
-                    {pricing.clientPaysWhatsApp && (
+                    {broadcastConfig.clientPaysWhatsApp && (
                       <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                         <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: '#22C55E' }}>WhatsApp (Meta)</Text>
                         <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: '#22C55E' }}>Client pays</Text>
@@ -1102,6 +1144,87 @@ const TRIGGER_LABEL: Record<string, { label: string; desc: string; tag: string; 
   'day_0': { label: 'On Expiry Day', desc: 'Sent on the expiry date', tag: 'Day 0', tagColor: Colors.danger },
 };
 
+
+// ── GymInvoiceForm — shows module prices + edit + generate ───────────────────
+function GymInvoiceForm({ gym, onDone, autoInvoice, upsertSubscription }: any) {
+  const [modules, setModules] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editAmount, setEditAmount] = useState('');
+  const MGMT = 99;
+
+  useEffect(() => {
+    supabase.from('gym_modules').select('is_enabled, module:modules(id, name, price)')
+      .eq('gym_id', gym.id).eq('is_enabled', true)
+      .then(({ data }) => {
+        setModules(data || []);
+        const total = (data || []).reduce((s: number, gm: any) => s + (gm.module?.price ?? 0), 0) + MGMT;
+        setEditAmount(String(total));
+        setLoading(false);
+      });
+  }, [gym.id]);
+
+  const modulesTotal = modules.reduce((s: number, gm: any) => s + (gm.module?.price ?? 0), 0);
+
+  const handleGenerate = () => {
+    const amount = parseFloat(editAmount) || 0;
+    if (!amount) { Alert.alert('Error', 'Enter a valid amount'); return; }
+    const today = new Date().toISOString().split('T')[0];
+    const nextMonth = new Date(); nextMonth.setMonth(nextMonth.getMonth() + 1);
+    const endDate = nextMonth.toISOString().split('T')[0];
+    autoInvoice.mutate({
+      gym_id: gym.id, amount,
+      description: `Monthly — ${modules.map((gm: any) => gm.module?.name).join(', ')} + Maintenance ₹${MGMT}`,
+    }, {
+      onSuccess: () => {
+        upsertSubscription.mutate({ gym_id: gym.id, plan: 'modules', amount, start_date: today, end_date: endDate });
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        Alert.alert('Invoice Created', `₹${amount.toLocaleString('en-IN')} invoice for ${gym.name}`);
+        onDone();
+      },
+      onError: (e: any) => Alert.alert('Error', e.message),
+    });
+  };
+
+  if (loading) return <ActivityIndicator color={Colors.primary} style={{ marginVertical: 10 }} />;
+
+  return (
+    <View style={{ gap: 8, paddingBottom: 12 }}>
+      {modules.length === 0 ? (
+        <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.textMuted }}>No modules enabled. Enable modules in Gym Modules first.</Text>
+      ) : (
+        <>
+          {modules.map((gm: any) => (
+            <View key={gm.module?.id} style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+              <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary }}>{gm.module?.name}</Text>
+              <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>₹{(gm.module?.price || 0).toLocaleString('en-IN')}</Text>
+            </View>
+          ))}
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary }}>Maintenance</Text>
+            <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>₹{MGMT}</Text>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: Colors.border, paddingTop: 8 }}>
+            <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 14, color: Colors.text }}>Suggested Total</Text>
+            <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 16, color: Colors.primary }}>₹{(modulesTotal + MGMT).toLocaleString('en-IN')}</Text>
+          </View>
+          <View>
+            <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.textMuted, marginBottom: 4 }}>Edit Amount (₹)</Text>
+            <TextInput
+              style={[section.input, { marginBottom: 8 }]}
+              value={editAmount}
+              onChangeText={setEditAmount}
+              keyboardType="numeric"
+              placeholderTextColor={Colors.textMuted}
+            />
+          </View>
+          <Pressable style={section.submitBtn} onPress={handleGenerate} disabled={autoInvoice.isPending}>
+            {autoInvoice.isPending ? <ActivityIndicator color="#000" /> : <><Ionicons name="receipt-outline" size={15} color="#000" /><Text style={section.submitBtnText}>Generate Invoice</Text></>}
+          </Pressable>
+        </>
+      )}
+    </View>
+  );
+}
 
 function BillingSection({ onClose }: { onClose: () => void }) {
   const insets = useSafeAreaInsets();
@@ -1225,31 +1348,29 @@ function BillingSection({ onClose }: { onClose: () => void }) {
 
         {/* Auto-generate invoices per gym */}
         <View style={section.card}>
-          <Text style={analytics.sectionTitle}>Auto-Generate Invoices</Text>
+          <Text style={analytics.sectionTitle}>Generate Invoice</Text>
           <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.textMuted, marginBottom: 10 }}>
-            Generates invoice based on enabled modules and their prices for each gym.
+            Shows module prices + maintenance. Edit amount before generating.
           </Text>
-          {gyms.map((gym: any) => (
-            <View key={gym.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: Colors.border }}>
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 14, color: Colors.text }}>{gym.name}</Text>
-                <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>
-                  Started: {new Date(gym.created_at).toLocaleDateString()}
-                </Text>
+          {gyms.map((gym: any) => {
+            const isExpanded = generating === gym.id + '_expand';
+            return (
+              <View key={gym.id} style={{ borderBottomWidth: 1, borderBottomColor: Colors.border }}>
+                <Pressable
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10 }}
+                  onPress={() => setGenerating(isExpanded ? null : gym.id + '_expand')}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 14, color: Colors.text }}>{gym.name}</Text>
+                  </View>
+                  <Ionicons name={isExpanded ? 'chevron-up' : 'chevron-down'} size={18} color={Colors.textMuted} />
+                </Pressable>
+                {isExpanded && (
+                  <GymInvoiceForm gym={gym} onDone={() => setGenerating(null)} autoInvoice={autoInvoice} upsertSubscription={upsertSubscription} />
+                )}
               </View>
-              <Pressable
-                style={{ flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: Colors.primaryMuted, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7, borderWidth: 1, borderColor: Colors.primary + '40', opacity: generating === gym.id ? 0.6 : 1 }}
-                onPress={() => handleAutoGenerate(gym)}
-                disabled={generating === gym.id}
-              >
-                {generating === gym.id
-                  ? <ActivityIndicator size="small" color={Colors.primary} />
-                  : <Ionicons name="receipt-outline" size={14} color={Colors.primary} />
-                }
-                <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 12, color: Colors.primary }}>Generate</Text>
-              </Pressable>
-            </View>
-          ))}
+            );
+          })}
           {gyms.length === 0 && <Text style={section.empty}>No gyms yet</Text>}
         </View>
 
