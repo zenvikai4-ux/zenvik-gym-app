@@ -171,7 +171,9 @@ export default function MoreScreen() {
         <ModulesSection onClose={() => setActiveSection(null)} />
       </Modal>
       <Modal visible={activeSection === 'whatsapp'} animationType="slide" onRequestClose={() => setActiveSection(null)}>
-        <WhatsAppOwnerSection onClose={() => setActiveSection(null)} />
+        {isAdmin
+          ? <WhatsAppAdminSection onClose={() => setActiveSection(null)} />
+          : <WhatsAppOwnerSection onClose={() => setActiveSection(null)} />}
       </Modal>
       <Modal visible={activeSection === 'billing'} animationType="slide" onRequestClose={() => setActiveSection(null)}>
         <BillingSection onClose={() => setActiveSection(null)} />
@@ -1447,6 +1449,107 @@ function BillingSection({ onClose }: { onClose: () => void }) {
 
 function getTriggerMeta(type: string) {
   return TRIGGER_LABEL[type] ?? { label: type, desc: 'Automated trigger', tag: type.toUpperCase(), tagColor: Colors.textMuted };
+}
+
+// ── WhatsApp Admin Section — configure WA credentials per gym ────────────────
+function WhatsAppAdminSection({ onClose }: { onClose: () => void }) {
+  const insets = useSafeAreaInsets();
+  const { data: gyms = [] } = useGyms();
+  const updateGym = useUpdateGym();
+  const [selectedGymId, setSelectedGymId] = useState('');
+  const [form, setForm] = useState({ whatsapp_phone_id: '', whatsapp_token: '', whatsapp_number: '' });
+  const [saved, setSaved] = useState(false);
+
+  const selectedGym = gyms.find((g: any) => g.id === selectedGymId);
+
+  useEffect(() => {
+    if (selectedGym) {
+      setForm({
+        whatsapp_phone_id: selectedGym.whatsapp_phone_id || '',
+        whatsapp_token: selectedGym.whatsapp_token || '',
+        whatsapp_number: selectedGym.whatsapp_number || '',
+      });
+      setSaved(false);
+    }
+  }, [selectedGymId]);
+
+  const handleSave = () => {
+    if (!selectedGymId) return;
+    updateGym.mutate({
+      id: selectedGymId,
+      whatsapp_phone_id: form.whatsapp_phone_id.trim() || null,
+      whatsapp_token: form.whatsapp_token.trim() || null,
+      whatsapp_number: form.whatsapp_number.trim() || null,
+    }, {
+      onSuccess: () => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); setSaved(true); setTimeout(() => setSaved(false), 2000); },
+      onError: (e: any) => Alert.alert('Error', e.message),
+    });
+  };
+
+  return (
+    <View style={{ flex: 1, backgroundColor: Colors.background, paddingTop: insets.top + 8 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: Colors.border }}>
+        <Pressable onPress={onClose} style={{ padding: 4, marginRight: 8 }}>
+          <Ionicons name="chevron-down" size={22} color={Colors.text} />
+        </Pressable>
+        <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 18, color: Colors.text, flex: 1 }}>WhatsApp Configuration</Text>
+        {selectedGymId && (
+          <Pressable
+            style={{ backgroundColor: saved ? '#22C55E' : Colors.primary, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10 }}
+            onPress={handleSave}
+            disabled={updateGym.isPending}
+          >
+            {updateGym.isPending
+              ? <ActivityIndicator size="small" color="#000" />
+              : <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 14, color: '#000' }}>{saved ? 'Saved ✓' : 'Save'}</Text>}
+          </Pressable>
+        )}
+      </View>
+
+      <ScrollView contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: insets.bottom + 20 }}>
+        <View style={section.formCard}>
+          <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: Colors.textSecondary, marginBottom: 8 }}>Select Gym</Text>
+          <GymPicker gyms={gyms} value={selectedGymId} onChange={setSelectedGymId} />
+        </View>
+
+        {!selectedGymId ? (
+          <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+            <Ionicons name="logo-whatsapp" size={48} color={Colors.textMuted} />
+            <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 14, color: Colors.textMuted, marginTop: 12 }}>Select a gym to configure WhatsApp</Text>
+          </View>
+        ) : (
+          <>
+            <View style={{ backgroundColor: Colors.info + '15', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: Colors.info + '30' }}>
+              <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.info, lineHeight: 18 }}>
+                These credentials are used to send WhatsApp messages from this gym's number. Get them from Meta Business Manager → WhatsApp → API Setup.
+              </Text>
+            </View>
+
+            {[
+              { key: 'whatsapp_number', label: 'WhatsApp Business Number', placeholder: '+91 98765 43210', hint: 'The gym\'s WhatsApp business number' },
+              { key: 'whatsapp_phone_id', label: 'Phone Number ID', placeholder: '1234567890123456', hint: 'From Meta → WhatsApp → API Setup' },
+              { key: 'whatsapp_token', label: 'Permanent Access Token', placeholder: 'EAAxxxx...', hint: 'Permanent token from Meta System User' },
+            ].map(f => (
+              <View key={f.key} style={section.formCard}>
+                <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: Colors.text, marginBottom: 4 }}>{f.label}</Text>
+                <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted, marginBottom: 8 }}>{f.hint}</Text>
+                <TextInput
+                  style={[section.input, { fontFamily: 'Inter_400Regular', fontSize: 13 }]}
+                  value={(form as any)[f.key]}
+                  onChangeText={v => setForm(p => ({ ...p, [f.key]: v }))}
+                  placeholder={f.placeholder}
+                  placeholderTextColor={Colors.textMuted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  secureTextEntry={f.key === 'whatsapp_token'}
+                />
+              </View>
+            ))}
+          </>
+        )}
+      </ScrollView>
+    </View>
+  );
 }
 
 function WhatsAppOwnerSection({ onClose }: { onClose: () => void }) {
