@@ -253,6 +253,15 @@ export function useInsertMember() {
     mutationFn: async (member: any) => {
       const { data, error } = await supabase.from('members').insert(member).select().single();
       if (error) throw error;
+      // Trigger welcome message
+      if (data?.id && member.gym_id) {
+        const GYM_SERVER = process.env.EXPO_PUBLIC_GYM_SERVER_URL || 'https://gymapp-server-production.up.railway.app';
+        fetch(`${GYM_SERVER}/member/welcome`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ member_id: data.id, gym_id: member.gym_id }),
+        }).catch(e => console.warn('Welcome message trigger failed:', e.message));
+      }
       return data;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['members'] }),
@@ -1090,11 +1099,16 @@ export function useGymStats(gymId?: string | null) {
     queryKey: ['gym_stats', gymId],
     enabled: !!gymId,
     queryFn: async () => {
-      const [{ count: trainerCount }, { count: memberCount }] = await Promise.all([
+      const [{ count: trainerCount }, { count: memberCount }, { count: membersWithTrainer }] = await Promise.all([
         supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('gym_id', gymId!).eq('role', 'trainer'),
         supabase.from('members').select('*', { count: 'exact', head: true }).eq('gym_id', gymId!),
+        supabase.from('members').select('*', { count: 'exact', head: true }).eq('gym_id', gymId!).not('trainer_id', 'is', null),
       ]);
-      return { trainerCount: trainerCount ?? 0, memberCount: memberCount ?? 0 };
+      return {
+        trainerCount: trainerCount ?? 0,
+        memberCount: memberCount ?? 0,
+        membersWithTrainer: membersWithTrainer ?? 0,
+      };
     },
   });
 }

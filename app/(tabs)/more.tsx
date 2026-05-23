@@ -20,7 +20,7 @@ import {
   useGymSubscriptionByGym,
   useBroadcastWhatsApp, useBroadcastInApp, useInsertQuery,
   useInsertModule, useUpdateModule, useDeleteModule,
-  useAutoInvoice, useGymModulePrice, useInsertNotification, useLatestInvoice, useUpsertGymSubscription,
+  useAutoInvoice, useGymModulePrice, useGymStats, useInsertNotification, useLatestInvoice, useUpsertGymSubscription,
   useGymKnowledge, useUpsertGymKnowledge,
   useGymAutomationConfig, useUpsertGymAutomationConfig,
   useEnabledModules,
@@ -66,6 +66,7 @@ export default function MoreScreen() {
       { key: 'gym_analytics', label: 'Gym Analytics', icon: 'bar-chart-outline', color: Colors.info },
       { key: 'branches', label: 'Gym Branches', icon: 'map-outline', color: Colors.primary },
       { key: 'my_modules', label: 'Gym Modules', icon: 'layers-outline', color: Colors.purple },
+      { key: 'estimation', label: 'Estimation Calculator', icon: 'calculator-outline', color: Colors.warning },
       { key: 'whatsapp', label: 'WhatsApp', icon: 'logo-whatsapp', color: '#25D366' },
       { key: 'billing', label: 'Billing', icon: 'card-outline', color: Colors.info },
     );
@@ -186,6 +187,9 @@ export default function MoreScreen() {
       </Modal>
       <Modal visible={activeSection === 'send_query'} animationType="slide" transparent onRequestClose={() => setActiveSection(null)}>
         <SendQueryModal onClose={() => setActiveSection(null)} />
+      </Modal>
+      <Modal visible={activeSection === 'estimation'} animationType="slide" onRequestClose={() => setActiveSection(null)}>
+        <EstimationCalculator onClose={() => setActiveSection(null)} />
       </Modal>
       <Modal visible={activeSection === 'my_modules'} animationType="slide" onRequestClose={() => setActiveSection(null)}>
         {isAdmin
@@ -797,6 +801,146 @@ function PlansSection({ onClose }: { onClose: () => void }) {
 }
 
 // ─── MODULES SECTION ──────────────────────────────────────────────────────────
+// ── Estimation Calculator — for quoting prospects ─────────────────────────────
+function EstimationCalculator({ onClose }: { onClose: () => void }) {
+  const insets = useSafeAreaInsets();
+  const { data: allModules = [] } = useModules();
+
+  const META_MARKETING = 0.88;
+  const META_UTILITY   = 0.13;
+  const MGMT_FEE       = 99;
+
+  const [form, setForm] = useState({
+    memberCount: '',
+    membersWithTrainer: '',
+    broadcastsPerMonth: '1',
+    clientPaysWhatsApp: true,
+    expiryReminders: true,
+    dietMessages: false,
+  });
+  const [selectedModules, setSelectedModules] = useState<Set<string>>(new Set());
+
+  const toggleModule = (id: string) => {
+    setSelectedModules(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const members = parseInt(form.memberCount) || 0;
+  const withTrainer = parseInt(form.membersWithTrainer) || 0;
+  const bcasts = parseInt(form.broadcastsPerMonth) || 0;
+
+  const broadcast = form.clientPaysWhatsApp ? 0 : members * bcasts * META_MARKETING;
+  const expiry    = form.clientPaysWhatsApp ? 0 : (form.expiryReminders ? members * META_UTILITY : 0);
+  const diet      = form.clientPaysWhatsApp ? 0 : (form.dietMessages ? withTrainer * 30 * META_UTILITY : 0);
+  const metaTotal = Math.ceil(broadcast + expiry + diet);
+  const modulesTotal = allModules.filter((m: any) => selectedModules.has(m.id)).reduce((s: number, m: any) => s + (m.price || 0), 0);
+  const total = metaTotal + modulesTotal + MGMT_FEE;
+
+  return (
+    <View style={{ flex: 1, backgroundColor: Colors.background, paddingTop: insets.top + 8 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: Colors.border }}>
+        <Pressable onPress={onClose} style={{ padding: 4, marginRight: 8 }}>
+          <Ionicons name="chevron-down" size={22} color={Colors.text} />
+        </Pressable>
+        <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 18, color: Colors.text, flex: 1 }}>Estimation Calculator</Text>
+      </View>
+
+      <ScrollView contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: insets.bottom + 20 }}>
+
+        <View style={{ backgroundColor: Colors.info + '15', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: Colors.info + '30' }}>
+          <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.info, lineHeight: 18 }}>
+            Use this to estimate monthly cost for a prospect. Enter their details below to get the quote.
+          </Text>
+        </View>
+
+        {/* Inputs */}
+        <View style={section.card}>
+          <Text style={analytics.sectionTitle}>Gym Details</Text>
+          <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.textMuted, marginBottom: 4 }}>Total Members</Text>
+              <TextInput style={section.input} value={form.memberCount} onChangeText={v => setForm(p => ({ ...p, memberCount: v }))} keyboardType="numeric" placeholder="e.g. 100" placeholderTextColor={Colors.textMuted} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.textMuted, marginBottom: 4 }}>With Trainer</Text>
+              <TextInput style={section.input} value={form.membersWithTrainer} onChangeText={v => setForm(p => ({ ...p, membersWithTrainer: v }))} keyboardType="numeric" placeholder="e.g. 30" placeholderTextColor={Colors.textMuted} />
+            </View>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.textMuted, marginBottom: 4 }}>Broadcasts/Month</Text>
+            <TextInput style={section.input} value={form.broadcastsPerMonth} onChangeText={v => setForm(p => ({ ...p, broadcastsPerMonth: v }))} keyboardType="numeric" placeholder="1" placeholderTextColor={Colors.textMuted} />
+          </View>
+        </View>
+
+        {/* WhatsApp toggles */}
+        <View style={section.card}>
+          <Text style={analytics.sectionTitle}>WhatsApp Charges</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>Client pays WhatsApp</Text>
+              <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>Their card on Meta — you don't charge Meta costs</Text>
+            </View>
+            <Switch value={form.clientPaysWhatsApp} onValueChange={v => setForm(p => ({ ...p, clientPaysWhatsApp: v }))} trackColor={{ true: '#22C55E', false: Colors.warning }} />
+          </View>
+          {!form.clientPaysWhatsApp && (
+            <>
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderTopWidth: 1, borderTopColor: Colors.border }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>Expiry Reminders</Text>
+                  <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>₹0.13 × {members} members</Text>
+                </View>
+                <Switch value={form.expiryReminders} onValueChange={v => setForm(p => ({ ...p, expiryReminders: v }))} trackColor={{ true: Colors.primary }} />
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderTopWidth: 1, borderTopColor: Colors.border }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>Diet Messages (daily)</Text>
+                  <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>₹0.13 × 30 days × {withTrainer} with trainer</Text>
+                </View>
+                <Switch value={form.dietMessages} onValueChange={v => setForm(p => ({ ...p, dietMessages: v }))} trackColor={{ true: Colors.primary }} />
+              </View>
+            </>
+          )}
+        </View>
+
+        {/* Modules */}
+        <View style={section.card}>
+          <Text style={analytics.sectionTitle}>Modules</Text>
+          {allModules.map((mod: any) => (
+            <Pressable key={mod.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: Colors.border, gap: 10 }} onPress={() => toggleModule(mod.id)}>
+              <Ionicons name={selectedModules.has(mod.id) ? 'checkmark-circle' : 'ellipse-outline'} size={20} color={selectedModules.has(mod.id) ? Colors.primary : Colors.textMuted} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: Colors.text }}>{mod.name}</Text>
+                {mod.description && <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>{mod.description}</Text>}
+              </View>
+              <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: Colors.primary }}>₹{(mod.price || 0).toLocaleString('en-IN')}/mo</Text>
+            </Pressable>
+          ))}
+          {allModules.length === 0 && <Text style={section.empty}>No modules configured yet</Text>}
+        </View>
+
+        {/* Result */}
+        <View style={{ backgroundColor: Colors.primaryMuted, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: Colors.primary + '40', gap: 8 }}>
+          <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 14, color: Colors.text, marginBottom: 4 }}>Monthly Estimate</Text>
+          {modulesTotal > 0 && <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary }}>Modules</Text><Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>₹{modulesTotal}</Text></View>}
+          {!form.clientPaysWhatsApp && broadcast > 0 && <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary }}>Broadcasts</Text><Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>₹{Math.ceil(broadcast)}</Text></View>}
+          {!form.clientPaysWhatsApp && form.expiryReminders && <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary }}>Expiry Reminders</Text><Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>₹{Math.ceil(expiry)}</Text></View>}
+          {!form.clientPaysWhatsApp && form.dietMessages && <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary }}>Diet Messages</Text><Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>₹{Math.ceil(diet)}</Text></View>}
+          {form.clientPaysWhatsApp && <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: '#22C55E' }}>WhatsApp (Meta)</Text><Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: '#22C55E' }}>Client pays directly</Text></View>}
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary }}>Maintenance</Text><Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>₹{MGMT_FEE}</Text></View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: Colors.primary + '40', paddingTop: 10, marginTop: 4 }}>
+            <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 16, color: Colors.text }}>You Charge / Month</Text>
+            <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 24, color: Colors.primary }}>₹{total.toLocaleString('en-IN')}</Text>
+          </View>
+        </View>
+
+      </ScrollView>
+    </View>
+  );
+}
+
 function ModulesSection({ onClose }: { onClose: () => void }) {
   const insets = useSafeAreaInsets();
   const { data: gyms = [] } = useGyms();
@@ -810,6 +954,9 @@ function ModulesSection({ onClose }: { onClose: () => void }) {
   const autoInvoice = useAutoInvoice();
   const upsertSubscription = useUpsertGymSubscription();
   const { data: gymPrice = 0 } = useGymModulePrice(selectedGymId || null);
+  const { data: gymStats } = useGymStats(selectedGymId || null);
+  const memberCount = gymStats?.memberCount ?? 0;
+  const membersWithTrainer = gymStats?.membersWithTrainer ?? 0;
 
   const [activeTab, setActiveTab] = useState<"manage" | "assign">("manage");
   const [showAddForm, setShowAddForm] = useState(false);
@@ -818,25 +965,22 @@ function ModulesSection({ onClose }: { onClose: () => void }) {
   const [modError, setModError] = useState("");
   const [toggling, setToggling] = useState<string | null>(null);
 
-  // Broadcast config per gym
   const META_MARKETING = 0.88;
   const META_UTILITY   = 0.13;
   const MGMT_FEE       = 99;
 
   const [broadcastConfig, setBroadcastConfig] = useState({
     broadcastsPerMonth: '1',
-    memberCount: '100',
     clientPaysWhatsApp: true,
     expiryReminders: true,
     dietMessages: false,
   });
 
   const calcTotal = () => {
-    const members = parseInt(broadcastConfig.memberCount) || 0;
-    const bcasts  = parseInt(broadcastConfig.broadcastsPerMonth) || 0;
-    const broadcast = broadcastConfig.clientPaysWhatsApp ? 0 : members * bcasts * META_MARKETING;
-    const expiry    = broadcastConfig.clientPaysWhatsApp ? 0 : (broadcastConfig.expiryReminders ? members * META_UTILITY : 0);
-    const diet      = broadcastConfig.clientPaysWhatsApp ? 0 : (broadcastConfig.dietMessages ? members * 30 * META_UTILITY : 0);
+    const bcasts    = parseInt(broadcastConfig.broadcastsPerMonth) || 0;
+    const broadcast = broadcastConfig.clientPaysWhatsApp ? 0 : memberCount * bcasts * META_MARKETING;
+    const expiry    = broadcastConfig.clientPaysWhatsApp ? 0 : (broadcastConfig.expiryReminders ? memberCount * META_UTILITY : 0);
+    const diet      = broadcastConfig.clientPaysWhatsApp ? 0 : (broadcastConfig.dietMessages ? membersWithTrainer * 30 * META_UTILITY : 0);
     const metaTotal = Math.ceil(broadcast + expiry + diet);
     return { broadcast: Math.ceil(broadcast), expiry: Math.ceil(expiry), diet: Math.ceil(diet), metaTotal };
   };
@@ -1008,16 +1152,24 @@ function ModulesSection({ onClose }: { onClose: () => void }) {
                 {/* Broadcast Config */}
                 <View style={[section.card, { gap: 10 }]}>
                   <Text style={analytics.sectionTitle}>WhatsApp Configuration</Text>
+
+                  {/* Live counts from DB */}
                   <View style={{ flexDirection: 'row', gap: 10 }}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.textMuted, marginBottom: 4 }}>Member Count</Text>
-                      <TextInput style={section.input} value={broadcastConfig.memberCount} onChangeText={v => setBroadcastConfig(p => ({ ...p, memberCount: v }))} keyboardType="numeric" placeholder="100" placeholderTextColor={Colors.textMuted} />
+                    <View style={{ flex: 1, backgroundColor: Colors.background, borderRadius: 10, padding: 10, borderWidth: 1, borderColor: Colors.border, alignItems: 'center' }}>
+                      <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 22, color: Colors.primary }}>{memberCount}</Text>
+                      <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>Total Members</Text>
                     </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.textMuted, marginBottom: 4 }}>Broadcasts/Month</Text>
-                      <TextInput style={section.input} value={broadcastConfig.broadcastsPerMonth} onChangeText={v => setBroadcastConfig(p => ({ ...p, broadcastsPerMonth: v }))} keyboardType="numeric" placeholder="1" placeholderTextColor={Colors.textMuted} />
+                    <View style={{ flex: 1, backgroundColor: Colors.background, borderRadius: 10, padding: 10, borderWidth: 1, borderColor: Colors.border, alignItems: 'center' }}>
+                      <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 22, color: Colors.warning }}>{membersWithTrainer}</Text>
+                      <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>With Trainer</Text>
                     </View>
                   </View>
+
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.textMuted, marginBottom: 4 }}>Broadcasts/Month</Text>
+                    <TextInput style={section.input} value={broadcastConfig.broadcastsPerMonth} onChangeText={v => setBroadcastConfig(p => ({ ...p, broadcastsPerMonth: v }))} keyboardType="numeric" placeholder="1" placeholderTextColor={Colors.textMuted} />
+                  </View>
+
                   <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderTopWidth: 1, borderTopColor: Colors.border }}>
                     <View style={{ flex: 1 }}>
                       <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>Client pays WhatsApp (card on Meta)</Text>
@@ -1030,14 +1182,14 @@ function ModulesSection({ onClose }: { onClose: () => void }) {
                       <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderTopWidth: 1, borderTopColor: Colors.border }}>
                         <View style={{ flex: 1 }}>
                           <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>Expiry Reminders</Text>
-                          <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>₹0.13/member/reminder</Text>
+                          <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>₹0.13 × {memberCount} members</Text>
                         </View>
                         <Switch value={broadcastConfig.expiryReminders} onValueChange={v => setBroadcastConfig(p => ({ ...p, expiryReminders: v }))} trackColor={{ true: Colors.primary }} />
                       </View>
                       <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderTopWidth: 1, borderTopColor: Colors.border }}>
                         <View style={{ flex: 1 }}>
                           <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>Diet Messages (daily)</Text>
-                          <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>₹0.13 × 30 days/member</Text>
+                          <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>₹0.13 × 30 days × {membersWithTrainer} members with trainer</Text>
                         </View>
                         <Switch value={broadcastConfig.dietMessages} onValueChange={v => setBroadcastConfig(p => ({ ...p, dietMessages: v }))} trackColor={{ true: Colors.primary }} />
                       </View>
@@ -1065,19 +1217,9 @@ function ModulesSection({ onClose }: { onClose: () => void }) {
                   {/* Meta inputs — only if you pay */}
                   {!broadcastConfig.clientPaysWhatsApp && (
                     <>
-                      <View style={{ flexDirection: 'row', gap: 10 }}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.textMuted, marginBottom: 4 }}>Members</Text>
-                          <TextInput style={section.input} value={broadcastConfig.memberCount} onChangeText={v => setBroadcastConfig(p => ({ ...p, memberCount: v }))} keyboardType="numeric" placeholder="100" placeholderTextColor={Colors.textMuted} />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.textMuted, marginBottom: 4 }}>Broadcasts/Month</Text>
-                          <TextInput style={section.input} value={broadcastConfig.broadcastsPerMonth} onChangeText={v => setBroadcastConfig(p => ({ ...p, broadcastsPerMonth: v }))} keyboardType="numeric" placeholder="1" placeholderTextColor={Colors.textMuted} />
-                        </View>
-                      </View>
                       {[
-                        { key: 'expiryReminders', label: 'Expiry Reminders', sub: `₹0.13/member → ₹${Math.ceil((parseInt(broadcastConfig.memberCount)||0)*0.13)}/mo` },
-                        { key: 'dietMessages', label: 'Diet Messages (daily)', sub: `₹0.13×30 → ₹${Math.ceil((parseInt(broadcastConfig.memberCount)||0)*3.9)}/mo` },
+                        { key: 'expiryReminders', label: 'Expiry Reminders', sub: `₹0.13 × ${memberCount} members` },
+                        { key: 'dietMessages', label: 'Diet Messages (daily)', sub: `₹0.13 × 30 days × ${membersWithTrainer} with trainer` },
                       ].map(t => (
                         <View key={t.key} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderTopWidth: 1, borderTopColor: Colors.border }}>
                           <View style={{ flex: 1 }}>
@@ -1097,10 +1239,22 @@ function ModulesSection({ onClose }: { onClose: () => void }) {
                       <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary }}>Modules ({enabledIds.size} enabled)</Text>
                       <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>₹{(gymPrice as number).toLocaleString('en-IN')}</Text>
                     </View>
-                    {!broadcastConfig.clientPaysWhatsApp && calc.metaTotal > 0 && (
+                    {!broadcastConfig.clientPaysWhatsApp && calc.broadcast > 0 && (
                       <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                        <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary }}>WhatsApp (Meta)</Text>
-                        <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>₹{calc.metaTotal}</Text>
+                        <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary }}>Broadcasts ({broadcastConfig.broadcastsPerMonth}×{memberCount} × ₹0.88)</Text>
+                        <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>₹{calc.broadcast}</Text>
+                      </View>
+                    )}
+                    {!broadcastConfig.clientPaysWhatsApp && broadcastConfig.expiryReminders && (
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                        <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary }}>Expiry ({memberCount} × ₹0.13)</Text>
+                        <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>₹{calc.expiry}</Text>
+                      </View>
+                    )}
+                    {!broadcastConfig.clientPaysWhatsApp && broadcastConfig.dietMessages && (
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                        <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary }}>Diet ({membersWithTrainer} with trainer × 30 × ₹0.13)</Text>
+                        <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>₹{calc.diet}</Text>
                       </View>
                     )}
                     {broadcastConfig.clientPaysWhatsApp && (
