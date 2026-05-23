@@ -11,7 +11,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/context/AuthContext';
 import {
   useLeads, useMembers, useTrainers, useBranches, useInsertBranch, useUpdateBranch,
-  useDeleteBranch, useInsertActivity, useGyms,
+  useDeleteBranch, useInsertActivity, useGyms, useUpdateGym,
   useInvoices, useInsertInvoice, useUpdateInvoice,
   useGymSubscriptions, useInsertGymSubscription, useUpdateGymSubscription, useDeleteGymSubscription,
   useModules, useGymModules, useUpsertGymModule,
