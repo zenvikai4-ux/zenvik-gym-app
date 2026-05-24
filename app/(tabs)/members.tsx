@@ -330,7 +330,7 @@ export default function MembersScreen() {
   const deleteMember = useDeleteMember();
   const insertActivity = useInsertActivity();
 
-  const memberLoginEnabled = enabledModules?.has('member login') ?? false;
+  const memberLoginEnabled = enabledModules?.has('Client login') ?? false;
   const feeRemindersEnabled = enabledModules?.has('fee reminders') ?? false;
 
   const [search, setSearch] = useState('');

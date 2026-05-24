@@ -592,6 +592,25 @@ const PLAN_OPTIONS = [
 ];
 
 const SUB_STATUS_MAP: Record<string, { label: string; color: string }> = {
+  active:   { label: 'Active',   color: Colors.primary },
+  expired:  { label: 'Expired',  color: Colors.danger },
+  pending:  { label: 'Pending',  color: Colors.warning },
+};
+
+const INV_STATUS_MAP: Record<string, { label: string; color: string }> = {
+  paid:     { label: 'Paid',     color: Colors.primary },
+  pending:  { label: 'Pending',  color: Colors.warning },
+  overdue:  { label: 'Overdue',  color: Colors.danger },
+  partial:  { label: 'Partial',  color: Colors.info },
+};
+
+const WA_STATUS_MAP: Record<string, { label: string; color: string }> = {
+  sent:       { label: 'Sent',       color: Colors.primary },
+  pending:    { label: 'Pending',    color: Colors.warning },
+  failed:     { label: 'Failed',     color: Colors.danger },
+  processing: { label: 'Processing', color: Colors.info },
+  partial:    { label: 'Partial',    color: Colors.warning },
+};
   active: { label: 'Active', color: Colors.primary },
   expired: { label: 'Expired', color: Colors.danger },
   pending: { label: 'Pending', color: Colors.warning },
@@ -2948,8 +2967,8 @@ function AutomationConfigSection({ onClose }: { onClose: () => void }) {
   const { data: enabledModules } = useEnabledModules(user?.gym_id);
   const upsert = useUpsertGymAutomationConfig();
 
-  const hasLeadModule  = enabledModules?.has('whatsapp leads') || enabledModules?.has('whatsapp_leads') || false;
-  const hasTrainerDiet = enabledModules?.has('trainer diet') || enabledModules?.has('trainer_diet') || false;
+  const hasLeadModule  = enabledModules?.has('WhatsApp lead management') || enabledModules?.has('whatsapp_leads') || false;
+  const hasTrainerDiet = enabledModules?.has('Trainer login and diet charts') || enabledModules?.has('trainer_diet') || false;
   const hasInstagram   = enabledModules?.has('instagram leads') || enabledModules?.has('instagram_leads') || false;
 
   const [form, setForm] = useState({
