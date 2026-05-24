@@ -611,11 +611,6 @@ const WA_STATUS_MAP: Record<string, { label: string; color: string }> = {
   processing: { label: 'Processing', color: Colors.info },
   partial:    { label: 'Partial',    color: Colors.warning },
 };
-  active: { label: 'Active', color: Colors.primary },
-  expired: { label: 'Expired', color: Colors.danger },
-  pending: { label: 'Pending', color: Colors.warning },
-  cancelled: { label: 'Cancelled', color: Colors.textMuted },
-};
 
 function PlansSection({ onClose }: { onClose: () => void }) {
   const insets = useSafeAreaInsets();
