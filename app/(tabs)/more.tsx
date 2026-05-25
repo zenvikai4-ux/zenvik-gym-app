@@ -403,43 +403,6 @@ function BranchesSection({ onClose }: { onClose: () => void }) {
   );
 }
 
-  const [showAdd, setShowAdd] = useState(false);
-  const [form, setForm] = useState({ name: '', location: '' });
-  const [formError, setFormError] = useState('');
-  const [editingBranch, setEditingBranch] = useState<any>(null);
-  const [editForm, setEditForm] = useState({ name: '', location: '' });
-  const [pendingDelete, setPendingDelete] = useState<any>(null);
-
-  const handleAdd = () => {
-    setFormError('');
-    if (!form.name.trim()) { setFormError('Branch name is required'); return; }
-    if (!selectedGymId) { setFormError('Select a gym first'); return; }
-    insertBranch.mutate(
-      { name: form.name, location: form.location || null, gym_id: selectedGymId },
-      {
-        onSuccess: () => {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          setShowAdd(false); setForm({ name: '', location: '' });
-        },
-        onError: (e: any) => setFormError(e.message),
-      }
-    );
-  };
-
-  const handleEdit = () => {
-    if (!editingBranch) return;
-    updateBranch.mutate(
-      { id: editingBranch.id, name: editForm.name, location: editForm.location || null },
-      {
-        onSuccess: () => {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          setEditingBranch(null);
-        },
-      }
-    );
-  };
-
-
 function PlansSection({ onClose }: { onClose: () => void }) {
   const insets = useSafeAreaInsets();
   const { data: gyms = [] } = useGyms();
