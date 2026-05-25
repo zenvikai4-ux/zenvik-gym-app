@@ -35,7 +35,14 @@ function GymCard({ gym, onEdit, onDelete, onToggle }: {
           <Text style={styles.gymAvatarText}>{(gym.name || 'G')[0].toUpperCase()}</Text>
         </View>
         <View style={styles.gymInfo}>
-          <Text style={styles.gymName}>{gym.name}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text style={styles.gymName}>{gym.name}</Text>
+            {gym.parent_gym_id && (
+              <View style={{ backgroundColor: Colors.info + '20', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 }}>
+                <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 9, color: Colors.info }}>BRANCH</Text>
+              </View>
+            )}
+          </View>
           <Text style={styles.gymEmail}>{gym.email || 'No email'}</Text>
         </View>
         <View style={styles.cardRight}>
@@ -125,31 +132,12 @@ export default function GymsScreen() {
   const [form, setForm] = useState({ name: '', owner_name: '', email: '', phone: '', password: '', address: '', whatsapp_number: '', instagram_handle: '', capacity: '' });
   const [formError, setFormError] = useState('');
 
-  // Pricing calculator
-  const META_MARKETING = 0.88;
-  const META_UTILITY   = 0.13;
-  const MGMT_FEE       = 99;
   const [pricing, setPricing] = useState({
     memberCount: '100',
     broadcastsPerMonth: '1',
-    expiryReminders: true,
-    dietMessages: false,
-    moduleLeadManagement: false,
-    moduleTrainerDiet: false,
-    moduleClientLogin: false,
     clientPaysWhatsApp: true,
+    openSundays: true,
   });
-  const calcPricing = () => {
-    const members = parseInt(pricing.memberCount) || 0;
-    const bcasts  = parseInt(pricing.broadcastsPerMonth) || 0;
-    const broadcast = pricing.clientPaysWhatsApp ? 0 : members * bcasts * META_MARKETING;
-    const expiry    = pricing.clientPaysWhatsApp ? 0 : (pricing.expiryReminders ? members * META_UTILITY : 0);
-    const diet      = pricing.clientPaysWhatsApp ? 0 : (pricing.dietMessages ? members * 30 * META_UTILITY : 0);
-    const metaTotal = Math.ceil(broadcast + expiry + diet);
-    const modTotal  = (pricing.moduleLeadManagement ? 150 : 0) + (pricing.moduleTrainerDiet ? 200 : 0) + (pricing.moduleClientLogin ? 50 : 0);
-    return { broadcast: Math.ceil(broadcast), expiry: Math.ceil(expiry), diet: Math.ceil(diet), metaTotal, modTotal, total: metaTotal + modTotal + MGMT_FEE };
-  };
-  const priceBreakdown = calcPricing();
   const [editGym, setEditGym] = useState<any>(null);
   const [editForm, setEditForm] = useState({ name: '', email: '', phone: '', address: '' });
   const [pendingDelete, setPendingDelete] = useState<any>(null);
@@ -446,84 +434,33 @@ export default function GymsScreen() {
                 The email and password will be the login credentials for the gym owner.
               </Text>
 
-              {/* Pricing Calculator */}
-              <View style={styles.calcCard}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                  <Ionicons name="calculator-outline" size={15} color={Colors.warning} />
-                  <Text style={styles.calcTitle}>Monthly Pricing Calculator</Text>
-                </View>
-                <Text style={styles.calcSub}>Estimate what to charge this gym per month</Text>
-
-                {/* Credit card toggle */}
-                <Pressable
-                  style={[styles.calcToggleRow, { backgroundColor: pricing.clientPaysWhatsApp ? '#22C55E15' : Colors.warning + '15', borderRadius: 10, paddingHorizontal: 10, borderWidth: 1, borderColor: pricing.clientPaysWhatsApp ? '#22C55E40' : Colors.warning + '40', marginBottom: 10 }]}
-                  onPress={() => setPricing(p => ({ ...p, clientPaysWhatsApp: !p.clientPaysWhatsApp }))}
-                >
+              {/* Basic pricing info for Gym Modules reference */}
+              <View style={{ backgroundColor: Colors.secondary, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: Colors.border, gap: 12 }}>
+                <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: Colors.text }}>Pricing Reference</Text>
+                <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.textMuted }}>This info is used in Gym Modules for pricing calculation.</Text>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
                   <View style={{ flex: 1 }}>
-                    <Text style={[styles.calcToggleLabel, { color: pricing.clientPaysWhatsApp ? '#22C55E' : Colors.warning }]}>
-                      {pricing.clientPaysWhatsApp ? '✅ Client pays WhatsApp (their card on Meta)' : '⚠️ You pay WhatsApp charges'}
-                    </Text>
-                    <Text style={styles.calcToggleSub}>
-                      {pricing.clientPaysWhatsApp ? 'You only charge modules + maintenance' : 'Meta charges added to client bill'}
-                    </Text>
+                    <Text style={styles.fieldLabel}>Member Count</Text>
+                    <TextInput style={styles.input} value={pricing.memberCount} onChangeText={v => setPricing(p => ({ ...p, memberCount: v }))} keyboardType="numeric" placeholder="100" placeholderTextColor={Colors.textMuted} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.fieldLabel}>Broadcasts/Month</Text>
+                    <TextInput style={styles.input} value={pricing.broadcastsPerMonth} onChangeText={v => setPricing(p => ({ ...p, broadcastsPerMonth: v }))} keyboardType="numeric" placeholder="1" placeholderTextColor={Colors.textMuted} />
+                  </View>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>Client pays WhatsApp (card on Meta)</Text>
+                    <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>Toggle off if you bear Meta charges</Text>
                   </View>
                   <Switch value={pricing.clientPaysWhatsApp} onValueChange={v => setPricing(p => ({ ...p, clientPaysWhatsApp: v }))} trackColor={{ true: '#22C55E', false: Colors.warning }} />
-                </Pressable>
-
-                {/* Member count + broadcasts — only if you pay Meta */}
-                {!pricing.clientPaysWhatsApp && (
-                  <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.calcLabel}>Members</Text>
-                      <TextInput style={styles.calcInput} value={pricing.memberCount} onChangeText={v => setPricing(p => ({ ...p, memberCount: v }))} keyboardType="numeric" placeholder="100" placeholderTextColor={Colors.textMuted} />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.calcLabel}>Broadcasts/Month</Text>
-                      <TextInput style={styles.calcInput} value={pricing.broadcastsPerMonth} onChangeText={v => setPricing(p => ({ ...p, broadcastsPerMonth: v }))} keyboardType="numeric" placeholder="1" placeholderTextColor={Colors.textMuted} />
-                    </View>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>Open on Sundays</Text>
+                    <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>Affects diet message scheduling</Text>
                   </View>
-                )}
-
-                {!pricing.clientPaysWhatsApp && [
-                  { key: 'expiryReminders', label: 'Expiry Reminders', sub: `₹0.13/member → ₹${Math.ceil((parseInt(pricing.memberCount)||0)*0.13)}/mo` },
-                  { key: 'dietMessages', label: 'Diet Messages (daily)', sub: `₹0.13×30 → ₹${Math.ceil((parseInt(pricing.memberCount)||0)*0.13*30)}/mo` },
-                ].map(t => (
-                  <View key={t.key} style={styles.calcToggleRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.calcToggleLabel}>{t.label}</Text>
-                      <Text style={styles.calcToggleSub}>{t.sub}</Text>
-                    </View>
-                    <Switch value={(pricing as any)[t.key]} onValueChange={v => setPricing(p => ({ ...p, [t.key]: v }))} trackColor={{ true: Colors.primary }} />
-                  </View>
-                ))}
-
-                {/* Modules */}
-                <Text style={[styles.calcLabel, { marginTop: 8, marginBottom: 6 }]}>Modules</Text>
-                {[
-                  { key: 'moduleClientLogin', label: 'Client Login & Progress', price: '₹50/mo' },
-                  { key: 'moduleLeadManagement', label: 'WhatsApp Lead Management', price: '₹150/mo' },
-                  { key: 'moduleTrainerDiet', label: 'Trainer Login & Diet Charts', price: '₹200/mo' },
-                ].map(m => (
-                  <Pressable key={m.key} style={[styles.moduleChip, (pricing as any)[m.key] && styles.moduleChipActive]} onPress={() => setPricing(p => ({ ...p, [m.key]: !(p as any)[m.key] }))}>
-                    <Ionicons name={(pricing as any)[m.key] ? 'checkmark-circle' : 'ellipse-outline'} size={16} color={(pricing as any)[m.key] ? Colors.primary : Colors.textMuted} />
-                    <Text style={[styles.moduleChipLabel, (pricing as any)[m.key] && { color: Colors.primary }]}>{m.label}</Text>
-                    <Text style={[styles.moduleChipPrice, (pricing as any)[m.key] && { color: Colors.primary }]}>{m.price}</Text>
-                  </Pressable>
-                ))}
-
-                {/* Breakdown */}
-                <View style={styles.calcBreakdown}>
-                  <Text style={styles.calcBreakdownTitle}>You Charge / Month</Text>
-                  {!pricing.clientPaysWhatsApp && priceBreakdown.broadcast > 0 && <View style={styles.calcRow}><Text style={styles.calcRowLabel}>Broadcasts</Text><Text style={styles.calcRowVal}>₹{priceBreakdown.broadcast}</Text></View>}
-                  {!pricing.clientPaysWhatsApp && pricing.expiryReminders && <View style={styles.calcRow}><Text style={styles.calcRowLabel}>Expiry Reminders</Text><Text style={styles.calcRowVal}>₹{priceBreakdown.expiry}</Text></View>}
-                  {!pricing.clientPaysWhatsApp && pricing.dietMessages && <View style={styles.calcRow}><Text style={styles.calcRowLabel}>Diet Messages</Text><Text style={styles.calcRowVal}>₹{priceBreakdown.diet}</Text></View>}
-                  {pricing.clientPaysWhatsApp && <View style={styles.calcRow}><Text style={[styles.calcRowLabel, { color: '#22C55E' }]}>WhatsApp charges</Text><Text style={[styles.calcRowVal, { color: '#22C55E' }]}>Client pays</Text></View>}
-                  {priceBreakdown.modTotal > 0 && <View style={styles.calcRow}><Text style={styles.calcRowLabel}>Modules</Text><Text style={styles.calcRowVal}>₹{priceBreakdown.modTotal}</Text></View>}
-                  <View style={styles.calcRow}><Text style={styles.calcRowLabel}>Maintenance</Text><Text style={styles.calcRowVal}>₹{MGMT_FEE}</Text></View>
-                  <View style={[styles.calcRow, { borderTopWidth: 1, borderTopColor: Colors.border, paddingTop: 8, marginTop: 4 }]}>
-                    <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 14, color: Colors.text }}>Total</Text>
-                    <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 20, color: Colors.primary }}>₹{priceBreakdown.total}</Text>
-                  </View>
+                  <Switch value={pricing.openSundays} onValueChange={v => setPricing(p => ({ ...p, openSundays: v }))} trackColor={{ true: Colors.primary }} />
                 </View>
               </View>
               <Pressable
@@ -670,21 +607,4 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary, borderRadius: 12, padding: 14, marginTop: 4,
   },
   submitBtnText: { fontFamily: 'Inter_600SemiBold', fontSize: 15, color: '#000' },
-  calcCard: { backgroundColor: Colors.secondary, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: Colors.border, marginBottom: 12 },
-  calcTitle: { fontFamily: 'Inter_700Bold', fontSize: 14, color: Colors.text },
-  calcSub: { fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.textMuted, marginBottom: 10 },
-  calcLabel: { fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.textMuted, textTransform: 'uppercase' as const, letterSpacing: 0.4 },
-  calcInput: { backgroundColor: Colors.card, borderRadius: 8, height: 40, paddingHorizontal: 12, fontFamily: 'Inter_400Regular', fontSize: 14, color: Colors.text, borderWidth: 1, borderColor: Colors.border },
-  calcToggleRow: { flexDirection: 'row' as const, alignItems: 'center' as const, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: Colors.border, gap: 10 },
-  calcToggleLabel: { fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text },
-  calcToggleSub: { fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted, marginTop: 1 },
-  moduleChip: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 8, padding: 10, borderRadius: 10, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.card, marginBottom: 6 },
-  moduleChipActive: { borderColor: Colors.primary, backgroundColor: Colors.primaryMuted },
-  moduleChipLabel: { fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.textSecondary, flex: 1 },
-  moduleChipPrice: { fontFamily: 'Inter_600SemiBold', fontSize: 12, color: Colors.textMuted },
-  calcBreakdown: { backgroundColor: Colors.card, borderRadius: 10, padding: 12, borderWidth: 1, borderColor: Colors.border, marginTop: 10, gap: 6 },
-  calcBreakdownTitle: { fontFamily: 'Inter_600SemiBold', fontSize: 12, color: Colors.textSecondary, textTransform: 'uppercase' as const, letterSpacing: 0.5, marginBottom: 4 },
-  calcRow: { flexDirection: 'row' as const, justifyContent: 'space-between' as const, alignItems: 'center' as const },
-  calcRowLabel: { fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.textSecondary },
-  calcRowVal: { fontFamily: 'Inter_500Medium', fontSize: 12, color: Colors.text },
 });

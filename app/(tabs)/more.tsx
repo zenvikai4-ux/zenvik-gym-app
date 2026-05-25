@@ -247,12 +247,161 @@ function BranchesSection({ onClose }: { onClose: () => void }) {
   const { data: gyms = [] } = useGyms();
   const isAdmin = user?.role === 'super_admin';
 
-  // Admin picks a gym; owner uses their own gym_id
   const [selectedGymId, setSelectedGymId] = useState(isAdmin ? '' : (user?.gym_id ?? ''));
-  const { data: branches = [], isLoading } = useBranches(selectedGymId || null);
-  const insertBranch = useInsertBranch();
-  const updateBranch = useUpdateBranch();
-  const deleteBranch = useDeleteBranch();
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState({ name: '', address: '', whatsapp_number: '', owner_name: '', email: '', password: '' });
+  const [formError, setFormError] = useState('');
+  const [adding, setAdding] = useState(false);
+
+  // Branches = gyms where parent_gym_id = selectedGymId
+  const branches = gyms.filter((g: any) => g.parent_gym_id === selectedGymId);
+  const selectedGym = gyms.find((g: any) => g.id === selectedGymId);
+
+  const handleAddBranch = async () => {
+    setFormError('');
+    if (!form.name.trim()) { setFormError('Branch name is required'); return; }
+    if (!selectedGymId) { setFormError('Select a gym first'); return; }
+    if (!form.email || !form.password) { setFormError('Owner email and password are required'); return; }
+    if (form.password.length < 6) { setFormError('Password must be at least 6 characters'); return; }
+
+    setAdding(true);
+    try {
+      // Create owner account
+      const { data: signUpData, error: signUpError } = await supabase.auth.admin
+        ? await (supabase as any).auth.admin.createUser({ email: form.email, password: form.password, email_confirm: true })
+        : await supabase.auth.signUp({ email: form.email, password: form.password });
+
+      // Insert branch gym with parent_gym_id
+      const { data: branchGym, error: gymError } = await supabase
+        .from('gyms')
+        .insert({
+          name: form.name.trim(),
+          address: form.address.trim() || null,
+          whatsapp_number: form.whatsapp_number.trim() || null,
+          parent_gym_id: selectedGymId,
+          is_active: true,
+        })
+        .select()
+        .single();
+
+      if (gymError) throw gymError;
+
+      // Create owner profile
+      const userId = signUpData?.user?.id ?? signUpData?.data?.user?.id;
+      if (userId && branchGym) {
+        await supabase.from('profiles').upsert({
+          id: userId,
+          name: form.owner_name || form.name + ' Owner',
+          email: form.email,
+          role: 'gym_owner',
+          gym_id: branchGym.id,
+        });
+        await supabase.rpc('confirm_user_email' as any, { user_email: form.email }).catch(() => {});
+      }
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setShowAdd(false);
+      setForm({ name: '', address: '', whatsapp_number: '', owner_name: '', email: '', password: '' });
+    } catch (e: any) {
+      setFormError(e.message);
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  return (
+    <View style={{ flex: 1, backgroundColor: Colors.background }}>
+      <SectionHeader title="Gym Branches" onClose={onClose} />
+      <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: insets.bottom + 20 }}>
+
+        {isAdmin && (
+          <View style={section.formCard}>
+            <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.textSecondary, marginBottom: 6 }}>
+              Select a gym to manage its branches
+            </Text>
+            <GymPicker gyms={gyms.filter((g: any) => !g.parent_gym_id)} value={selectedGymId} onChange={setSelectedGymId} />
+          </View>
+        )}
+
+        {selectedGymId && (
+          <>
+            {selectedGym && (
+              <View style={{ backgroundColor: Colors.primaryMuted, borderRadius: 10, padding: 12, borderWidth: 1, borderColor: Colors.primary + '40' }}>
+                <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: Colors.primary }}>Parent Gym: {selectedGym.name}</Text>
+                <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.textMuted, marginTop: 2 }}>{branches.length} branch{branches.length !== 1 ? 'es' : ''}</Text>
+              </View>
+            )}
+
+            <Pressable
+              style={[section.addBtn, showAdd && { backgroundColor: Colors.secondary }]}
+              onPress={() => setShowAdd(s => !s)}
+            >
+              <Ionicons name={showAdd ? 'close-outline' : 'add'} size={18} color={Colors.primary} />
+              <Text style={section.addBtnText}>{showAdd ? 'Cancel' : 'Add Branch'}</Text>
+            </Pressable>
+
+            {showAdd && (
+              <View style={section.formCard}>
+                <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 14, color: Colors.text, marginBottom: 10 }}>New Branch Details</Text>
+                {[
+                  { key: 'name', label: 'Branch Name *', placeholder: 'Yfitness - Branch 2' },
+                  { key: 'address', label: 'Address', placeholder: 'Branch location' },
+                  { key: 'whatsapp_number', label: 'WhatsApp Number', placeholder: '+91 98765 43210' },
+                  { key: 'owner_name', label: 'Branch Owner Name', placeholder: 'Owner Name' },
+                  { key: 'email', label: 'Owner Email *', placeholder: 'owner@branch.com' },
+                  { key: 'password', label: 'Owner Password *', placeholder: 'Min 6 characters' },
+                ].map(f => (
+                  <TextInput
+                    key={f.key}
+                    style={[section.input, { marginBottom: 8 }]}
+                    placeholder={f.placeholder}
+                    placeholderTextColor={Colors.textMuted}
+                    value={(form as any)[f.key]}
+                    onChangeText={v => setForm(p => ({ ...p, [f.key]: v }))}
+                    secureTextEntry={f.key === 'password'}
+                    autoCapitalize="none"
+                  />
+                ))}
+                {!!formError && <Text style={{ color: Colors.danger, fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 4 }}>{formError}</Text>}
+                <Pressable style={[section.submitBtn, { marginTop: 10, opacity: adding ? 0.6 : 1 }]} onPress={handleAddBranch} disabled={adding}>
+                  {adding ? <ActivityIndicator color="#000" /> : <Text style={section.submitBtnText}>Create Branch</Text>}
+                </Pressable>
+              </View>
+            )}
+
+            {branches.length === 0 && !showAdd && (
+              <Text style={section.empty}>No branches yet. Add one above.</Text>
+            )}
+
+            {branches.map((b: any) => (
+              <View key={b.id} style={[section.card, { borderLeftWidth: 3, borderLeftColor: Colors.info }]}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <View style={{ backgroundColor: Colors.info + '20', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                    <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 10, color: Colors.info }}>BRANCH</Text>
+                  </View>
+                  <Text style={[section.name, { flex: 1 }]}>{b.name}</Text>
+                  <View style={{ backgroundColor: b.is_active ? Colors.primary + '20' : Colors.danger + '20', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                    <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 10, color: b.is_active ? Colors.primary : Colors.danger }}>{b.is_active ? 'Active' : 'Inactive'}</Text>
+                  </View>
+                </View>
+                {b.address && <Text style={section.sub}>📍 {b.address}</Text>}
+                {b.whatsapp_number && <Text style={section.sub}>📱 {b.whatsapp_number}</Text>}
+              </View>
+            ))}
+          </>
+        )}
+
+        {!selectedGymId && isAdmin && (
+          <View style={{ alignItems: 'center', paddingTop: 40 }}>
+            <Ionicons name="git-branch-outline" size={48} color={Colors.textMuted} />
+            <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 14, color: Colors.textMuted, marginTop: 12 }}>Select a gym to manage branches</Text>
+          </View>
+        )}
+
+      </ScrollView>
+    </View>
+  );
+}
 
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ name: '', location: '' });

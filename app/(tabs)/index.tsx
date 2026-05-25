@@ -70,9 +70,28 @@ function OwnerDashboard() {
   if (expired > 0) alerts.push({ msg: `${expired} membership(s) have expired`, color: Colors.danger });
   if (enquiries > 0) alerts.push({ msg: `${enquiries} new enquiries to follow up`, color: Colors.info });
 
+  const { data: notifs = [] } = useNotifications(null, user?.gym_id, null);
+  const unreadCount = notifs.filter((n: any) => !n.is_read).length;
+
   return (
     <>
-      <ScreenHeader title="Dashboard" subtitle={`Welcome back, ${user?.name?.split(' ')[0]}`} />
+      <ScreenHeader
+        title="Dashboard"
+        subtitle={`Welcome back, ${user?.name?.split(' ')[0]}`}
+        rightAction={{
+          icon: (
+            <View>
+              <Ionicons name="notifications-outline" size={22} color={Colors.text} />
+              {unreadCount > 0 && (
+                <View style={{ position: 'absolute', top: -4, right: -4, backgroundColor: Colors.danger, borderRadius: 8, minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3 }}>
+                  <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 9, color: '#fff' }}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+                </View>
+              )}
+            </View>
+          ),
+          onPress: () => router.push('/(tabs)/notifications' as any),
+        }}
+      />
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={[styles.content, { paddingBottom: tabBarHeight + 20 }]}
@@ -175,7 +194,17 @@ function AdminDashboard() {
 
   return (
     <>
-      <ScreenHeader title="Platform Overview" />
+      <ScreenHeader
+        title="Platform Overview"
+        rightAction={{
+          icon: (
+            <View>
+              <Ionicons name="notifications-outline" size={22} color={Colors.text} />
+            </View>
+          ),
+          onPress: () => router.push('/(tabs)/notifications' as any),
+        }}
+      />
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={[styles.content, { paddingBottom: tabBarHeight + 20 }]}
@@ -252,9 +281,28 @@ function TrainerDashboard() {
   const morning = clients.filter((c: any) => c.session_time === 'morning').length;
   const evening = clients.filter((c: any) => c.session_time === 'evening').length;
 
+  const { data: trainerNotifs = [] } = useNotifications(null, user?.gym_id, user?.id);
+  const trainerUnread = trainerNotifs.filter((n: any) => !n.is_read).length;
+
   return (
     <>
-      <ScreenHeader title="My Dashboard" subtitle={`Hello, ${user?.name?.split(' ')[0]}`} />
+      <ScreenHeader
+        title="My Dashboard"
+        subtitle={`Hello, ${user?.name?.split(' ')[0]}`}
+        rightAction={{
+          icon: (
+            <View>
+              <Ionicons name="notifications-outline" size={22} color={Colors.text} />
+              {trainerUnread > 0 && (
+                <View style={{ position: 'absolute', top: -4, right: -4, backgroundColor: Colors.danger, borderRadius: 8, minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3 }}>
+                  <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 9, color: '#fff' }}>{trainerUnread > 99 ? '99+' : trainerUnread}</Text>
+                </View>
+              )}
+            </View>
+          ),
+          onPress: () => router.push('/(tabs)/notifications' as any),
+        }}
+      />
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={[styles.content, { paddingBottom: tabBarHeight + 20 }]}
@@ -322,9 +370,27 @@ function MemberDashboard() {
   const history = (weightData as any)?.history ?? [];
   const latestWeight = history.length > 0 ? history[history.length - 1]?.weight_kg : null;
 
+  const unreadCount2 = notifs.filter((n: any) => !n.is_read).length;
+
   return (
     <>
-      <ScreenHeader title="My Dashboard" subtitle={`Welcome, ${user?.name?.split(' ')[0]}`} />
+      <ScreenHeader
+        title="My Dashboard"
+        subtitle={`Welcome, ${user?.name?.split(' ')[0]}`}
+        rightAction={{
+          icon: (
+            <View>
+              <Ionicons name="notifications-outline" size={22} color={Colors.text} />
+              {unreadCount2 > 0 && (
+                <View style={{ position: 'absolute', top: -4, right: -4, backgroundColor: Colors.danger, borderRadius: 8, minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3 }}>
+                  <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 9, color: '#fff' }}>{unreadCount2 > 99 ? '99+' : unreadCount2}</Text>
+                </View>
+              )}
+            </View>
+          ),
+          onPress: () => router2.push('/(tabs)/notifications' as any),
+        }}
+      />
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={[styles.content, { paddingBottom: tabBarHeight + 20 }]}
