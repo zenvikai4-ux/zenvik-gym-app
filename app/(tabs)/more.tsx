@@ -615,6 +615,21 @@ const SUB_STATUS_MAP: Record<string, { label: string; color: string }> = {
   cancelled: { label: 'Cancelled', color: Colors.textMuted },
 };
 
+const INV_STATUS_MAP: Record<string, { label: string; color: string }> = {
+  paid:    { label: 'Paid',    color: Colors.primary },
+  pending: { label: 'Pending', color: Colors.warning },
+  overdue: { label: 'Overdue', color: Colors.danger },
+  partial: { label: 'Partial', color: Colors.info },
+};
+
+const WA_STATUS_MAP: Record<string, { label: string; color: string }> = {
+  sent:       { label: 'Sent',       color: Colors.primary },
+  pending:    { label: 'Pending',    color: Colors.warning },
+  failed:     { label: 'Failed',     color: Colors.danger },
+  processing: { label: 'Processing', color: Colors.info },
+  partial:    { label: 'Partial',    color: Colors.warning },
+};
+
 
 
 function PlansSection({ onClose }: { onClose: () => void }) {
