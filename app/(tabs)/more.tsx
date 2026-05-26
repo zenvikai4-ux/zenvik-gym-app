@@ -403,6 +403,156 @@ function BranchesSection({ onClose }: { onClose: () => void }) {
   );
 }
 
+function AnalyticsSection({ onClose }: { onClose: () => void }) {
+  const { user } = useAuth();
+  const insets = useSafeAreaInsets();
+  const { data: leads = [] } = useLeads(user?.gym_id);
+  const { data: members = [] } = useMembers(user?.gym_id);
+  const { data: trainers = [] } = useTrainers(user?.gym_id);
+
+  const activeMembers = members.filter((m: any) => m.status === 'active').length;
+  const convCount = leads.filter((l: any) => l.status === 'member').length;
+  const convRate = leads.length ? Math.round((convCount / leads.length) * 100) : 0;
+
+  const funnelData = [
+    { stage: 'Enquiry', count: leads.filter((l: any) => l.status === 'enquiry').length, color: Colors.info },
+    { stage: 'Trial', count: leads.filter((l: any) => l.status === 'trial_booked').length, color: Colors.warning },
+    { stage: 'Visited', count: leads.filter((l: any) => l.status === 'visited').length, color: Colors.purple },
+    { stage: 'Member', count: leads.filter((l: any) => l.status === 'member').length, color: Colors.primary },
+    { stage: 'Churned', count: leads.filter((l: any) => l.status === 'churned').length, color: Colors.danger },
+  ];
+
+  return (
+    <View style={{ flex: 1, backgroundColor: Colors.background }}>
+      <SectionHeader title="Analytics" onClose={onClose} />
+      <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: insets.bottom + 20 }}>
+        <View style={analytics.grid}>
+          {[
+            { label: 'Total Leads', value: leads.length, color: Colors.info },
+            { label: 'Active Members', value: activeMembers, color: Colors.primary },
+            { label: 'Conversion', value: `${convRate}%`, color: Colors.warning },
+            { label: 'Trainers', value: trainers.length, color: Colors.purple },
+          ].map(item => (
+            <View key={item.label} style={[analytics.card, { borderTopColor: item.color }]}>
+              <Text style={analytics.cardLabel}>{item.label}</Text>
+              <Text style={[analytics.cardValue, { color: item.color }]}>{item.value}</Text>
+            </View>
+          ))}
+        </View>
+
+        <View style={section.card}>
+          <Text style={analytics.sectionTitle}>Lead Funnel</Text>
+          {funnelData.map(item => (
+            <View key={item.stage} style={analytics.funnelRow}>
+              <Text style={analytics.funnelLabel}>{item.stage}</Text>
+              <View style={analytics.barWrapper}>
+                <View style={[analytics.bar, {
+                  width: `${leads.length ? (item.count / leads.length) * 100 : 0}%`,
+                  backgroundColor: item.color,
+                }]} />
+              </View>
+              <Text style={[analytics.funnelCount, { color: item.color }]}>{item.count}</Text>
+            </View>
+          ))}
+        </View>
+
+        <View style={section.card}>
+          <Text style={analytics.sectionTitle}>Member Status</Text>
+          {[
+            { label: 'Active', value: activeMembers, color: Colors.primary },
+            { label: 'Expiring', value: members.filter((m: any) => m.status === 'expiring').length, color: Colors.warning },
+            { label: 'Expired', value: members.filter((m: any) => m.status === 'expired').length, color: Colors.danger },
+          ].map(item => (
+            <View key={item.label} style={analytics.funnelRow}>
+              <Text style={analytics.funnelLabel}>{item.label}</Text>
+              <View style={analytics.barWrapper}>
+                <View style={[analytics.bar, {
+                  width: `${members.length ? (item.value / members.length) * 100 : 0}%`,
+                  backgroundColor: item.color,
+                }]} />
+              </View>
+              <Text style={[analytics.funnelCount, { color: item.color }]}>{item.value}</Text>
+            </View>
+          ))}
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
+
+function GymAnalyticsSection({ onClose }: { onClose: () => void }) {
+  const insets = useSafeAreaInsets();
+  const { data: gyms = [] } = useGyms();
+  const { data: allMembers = [] } = useMembers();
+  const { data: allLeads = [] } = useLeads();
+  const { data: allTrainers = [] } = useTrainers();
+
+  const activeGyms = gyms.filter((g: any) => g.is_active).length;
+  const planCounts: Record<string, number> = {};
+  gyms.forEach((g: any) => { planCounts[g.plan] = (planCounts[g.plan] || 0) + 1; });
+
+  return (
+    <View style={{ flex: 1, backgroundColor: Colors.background }}>
+      <SectionHeader title="Gym Analytics" onClose={onClose} />
+      <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: insets.bottom + 20 }}>
+        <View style={analytics.grid}>
+          {[
+            { label: 'Total Gyms', value: gyms.length, color: Colors.primary },
+            { label: 'Active Gyms', value: activeGyms, color: Colors.info },
+            { label: 'Total Members', value: allMembers.length, color: Colors.warning },
+            { label: 'Total Leads', value: allLeads.length, color: Colors.purple },
+          ].map(item => (
+            <View key={item.label} style={[analytics.card, { borderTopColor: item.color }]}>
+              <Text style={analytics.cardLabel}>{item.label}</Text>
+              <Text style={[analytics.cardValue, { color: item.color }]}>{item.value}</Text>
+            </View>
+          ))}
+        </View>
+
+        <View style={section.card}>
+          <Text style={analytics.sectionTitle}>Gyms by Plan</Text>
+          {Object.entries(planCounts).map(([plan, count]) => (
+            <View key={plan} style={analytics.funnelRow}>
+              <Text style={[analytics.funnelLabel, { textTransform: 'capitalize' }]}>{plan}</Text>
+              <View style={analytics.barWrapper}>
+                <View style={[analytics.bar, {
+                  width: `${gyms.length ? (count / gyms.length) * 100 : 0}%`,
+                  backgroundColor: Colors.primary,
+                }]} />
+              </View>
+              <Text style={[analytics.funnelCount, { color: Colors.primary }]}>{count}</Text>
+            </View>
+          ))}
+          {Object.keys(planCounts).length === 0 && (
+            <Text style={section.empty}>No gyms yet</Text>
+          )}
+        </View>
+
+        <View style={section.card}>
+          <Text style={analytics.sectionTitle}>Members per Gym</Text>
+          {gyms.slice(0, 10).map((g: any) => {
+            const cnt = allMembers.filter((m: any) => m.gym_id === g.id).length;
+            const max = Math.max(...gyms.map((gym: any) => allMembers.filter((m: any) => m.gym_id === gym.id).length), 1);
+            return (
+              <View key={g.id} style={analytics.funnelRow}>
+                <Text style={analytics.funnelLabel} numberOfLines={1}>{g.name}</Text>
+                <View style={analytics.barWrapper}>
+                  <View style={[analytics.bar, { width: `${(cnt / max) * 100}%`, backgroundColor: Colors.info }]} />
+                </View>
+                <Text style={[analytics.funnelCount, { color: Colors.info }]}>{cnt}</Text>
+              </View>
+            );
+          })}
+          {gyms.length === 0 && <Text style={section.empty}>No gyms yet</Text>}
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
+
+// ─── helper ───────────────────────────────────────────────────────────────────
+
+
 function PlansSection({ onClose }: { onClose: () => void }) {
   const insets = useSafeAreaInsets();
   const { data: gyms = [] } = useGyms();
