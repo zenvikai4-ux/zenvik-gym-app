@@ -34,7 +34,7 @@ export default function TrainersScreen() {
   const qc = useQueryClient();
 
   // Check if Trainer Login module is active
-  const trainerLoginEnabled = enabledModules?.has('trainer login') ?? false;
+  const trainerLoginEnabled = enabledModules?.has('Trainer login and diet charts') ?? false;
 
   const [showAdd, setShowAdd] = useState(false);
   const [showPass, setShowPass] = useState(false);

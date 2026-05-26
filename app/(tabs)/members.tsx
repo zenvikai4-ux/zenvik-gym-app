@@ -331,7 +331,7 @@ export default function MembersScreen() {
   const insertActivity = useInsertActivity();
 
   const memberLoginEnabled = enabledModules?.has('Client login') ?? false;
-  const feeRemindersEnabled = enabledModules?.has('fee reminders') ?? false;
+  const feeRemindersEnabled = true; // Always enabled in base
 
   const [search, setSearch] = useState('');
   const params = useLocalSearchParams<{ filter?: string }>();

@@ -39,9 +39,9 @@ export default function TabLayout() {
   const isMember = user.role === "member";
 
   // Module gates for gym owner
-  const hasLeads = isOwner ? (enabledModules?.has('leads management') || enabledModules?.has('whatsapp leads') || enabledModules?.has('instagram leads')) : false;
-  const hasTrainerLogin = isOwner ? enabledModules?.has('trainer login') : false;
-  const hasMemberLogin = isOwner ? enabledModules?.has('member login') : false;
+  const hasLeads = isOwner ? enabledModules?.has('WhatsApp lead management') : false;
+  const hasTrainerLogin = isOwner ? enabledModules?.has('Trainer login and diet charts') : false;
+  const hasMemberLogin = isOwner ? enabledModules?.has('Client login') : false;
 
   // For owners: show tabs only if module is active
   // trainers tab always visible to owner (they manage trainers regardless of login module)
