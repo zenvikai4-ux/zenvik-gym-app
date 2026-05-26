@@ -1,11 +1,11 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   View, Text, StyleSheet, FlatList, ActivityIndicator, RefreshControl,
 } from 'react-native';
 
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/context/AuthContext';
-import { useNotifications } from '@/lib/hooks';
+import { useNotifications, useMarkNotificationsRead } from '@/lib/hooks';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Colors } from '@/constants/colors';
 import { useTabBarHeight } from '@/lib/useTabBarHeight';
@@ -29,6 +29,17 @@ const TYPE_ICONS: Record<string, string> = {
   fee_reminder: 'card-outline',
   diet: 'nutrition-outline',
   general: 'information-circle-outline',
+  lead: 'person-add-outline',
+  handoff: 'alert-circle-outline',
+};
+
+const TYPE_COLORS: Record<string, string> = {
+  broadcast: Colors.primary,
+  fee_reminder: Colors.warning,
+  diet: '#22C55E',
+  general: Colors.info,
+  lead: Colors.purple,
+  handoff: '#E1306C',
 };
 
 export default function NotificationsScreen() {
@@ -39,6 +50,17 @@ export default function NotificationsScreen() {
     user?.gym_id,
     user?.role === 'trainer' ? user?.id : null
   );
+  const markRead = useMarkNotificationsRead();
+
+  // Mark all as read when screen opens
+  useEffect(() => {
+    if (!isLoading && notifs.some((n: any) => !n.is_read)) {
+      markRead.mutate({
+        gymId: user?.gym_id,
+        memberId: user?.member_id,
+      });
+    }
+  }, [isLoading]);
 
   if (isLoading) {
     return (

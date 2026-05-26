@@ -813,6 +813,20 @@ export function useInsertNotification() {
   });
 }
 
+export function useMarkNotificationsRead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ gymId, memberId }: { gymId?: string | null; memberId?: string | null }) => {
+      let query = supabase.from('notifications').update({ is_read: true }).eq('is_read', false);
+      if (gymId) query = (query as any).eq('gym_id', gymId);
+      if (memberId) query = (query as any).eq('member_id', memberId);
+      const { error } = await query;
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['notifications'] }),
+  });
+}
+
 // ── QUERIES (support tickets) ─────────────────────────────────────────
 export function useQueries(gymId?: string | null, isAdmin?: boolean) {
   return useQuery({
