@@ -1214,7 +1214,7 @@ export function useEnabledModules(gymId?: string | null) {
         .eq('gym_id', gymId!)
         .eq('is_enabled', true);
       if (error) throw error;
-      const names = new Set((data ?? []).map((gm: any) => gm.module?.name?.toLowerCase() ?? ''));
+      const names = new Set((data ?? []).map((gm: any) => gm.module?.name ?? ''));
       return names;
     },
   });

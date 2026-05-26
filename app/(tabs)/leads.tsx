@@ -232,8 +232,8 @@ export default function LeadsScreen() {
   const deleteLead = useDeleteLead();
   const insertActivity = useInsertActivity();
 
-  const leadsEnabled = enabledModules?.has('leads management') ?? true;
-  const waLeadsEnabled = enabledModules?.has('whatsapp leads') ?? false;
+  const leadsEnabled = enabledModules?.has('WhatsApp lead management') ?? true;
+  const waLeadsEnabled = enabledModules?.has('WhatsApp lead management') ?? false;
   const igLeadsEnabled = enabledModules?.has('instagram leads') ?? false;
   const hasAnyLeads = leadsEnabled || waLeadsEnabled || igLeadsEnabled;
 
