@@ -553,6 +553,70 @@ function GymAnalyticsSection({ onClose }: { onClose: () => void }) {
 // ─── helper ───────────────────────────────────────────────────────────────────
 
 
+function fmtDate(d?: string | null) {
+  if (!d) return '—';
+  return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function StatusBadge({ status, map }: { status: string; map: Record<string, { label: string; color: string }> }) {
+  const s = map[status] ?? { label: status, color: Colors.textMuted };
+  return (
+    <View style={{ backgroundColor: s.color + '22', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, borderWidth: 1, borderColor: s.color + '55' }}>
+      <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 11, color: s.color, textTransform: 'capitalize' }}>{s.label}</Text>
+    </View>
+  );
+}
+
+function GymPicker({ gyms, value, onChange }: { gyms: any[]; value: string; onChange: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const selected = gyms.find(g => g.id === value);
+  return (
+    <View>
+      <Pressable
+        style={[section.input, { justifyContent: 'space-between', flexDirection: 'row', alignItems: 'center', height: 44 }]}
+        onPress={() => setOpen(!open)}
+      >
+        <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 14, color: selected ? Colors.text : Colors.textMuted }}>
+          {selected ? selected.name : 'Select Gym *'}
+        </Text>
+        <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={16} color={Colors.textMuted} />
+      </Pressable>
+      {open && (
+        <View style={{ backgroundColor: Colors.secondary, borderRadius: 10, borderWidth: 1, borderColor: Colors.border, marginTop: 4, maxHeight: 180 }}>
+          <ScrollView nestedScrollEnabled>
+            {gyms.map(g => (
+              <Pressable
+                key={g.id}
+                style={{ paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: Colors.border }}
+                onPress={() => { onChange(g.id); setOpen(false); }}
+              >
+                <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 14, color: g.id === value ? Colors.primary : Colors.text }}>{g.name}</Text>
+              </Pressable>
+            ))}
+            {gyms.length === 0 && <Text style={{ padding: 12, color: Colors.textMuted, fontFamily: 'Inter_400Regular', fontSize: 13 }}>No gyms found</Text>}
+          </ScrollView>
+        </View>
+      )}
+    </View>
+  );
+}
+
+// ─── PLANS SECTION ────────────────────────────────────────────────────────────
+const PLAN_OPTIONS = [
+  { value: 'base', label: 'Base', price: '₹999/mo', color: Colors.info },
+  { value: 'classic', label: 'Classic', price: '₹1,299/mo', color: Colors.purple },
+  { value: 'pro', label: 'Pro', price: '₹1,999/mo', color: Colors.warning },
+];
+
+const SUB_STATUS_MAP: Record<string, { label: string; color: string }> = {
+  active: { label: 'Active', color: Colors.primary },
+  expired: { label: 'Expired', color: Colors.danger },
+  pending: { label: 'Pending', color: Colors.warning },
+  cancelled: { label: 'Cancelled', color: Colors.textMuted },
+};
+
+
+
 function PlansSection({ onClose }: { onClose: () => void }) {
   const insets = useSafeAreaInsets();
   const { data: gyms = [] } = useGyms();
