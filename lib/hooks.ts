@@ -153,6 +153,67 @@ export function useLeadConversations(leadId?: string | null) {
       if (error) throw error;
       return data ?? [];
     },
+    refetchInterval: 5000, // Poll every 5s for new messages
+  });
+}
+
+export function useInsertLeadConversation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (msg: { lead_id: string; gym_id: string; role: string; message: string }) => {
+      const { data, error } = await supabase.from('lead_conversations').insert(msg).select().single();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ['lead_conversations', vars.lead_id] }),
+  });
+}
+
+export function useSendWhatsAppMessage() {
+  return useMutation({
+    mutationFn: async ({ phone, message, gymId }: { phone: string; message: string; gymId: string }) => {
+      const GYM_SERVER = process.env.EXPO_PUBLIC_GYM_SERVER_URL || 'https://gymapp-server-production.up.railway.app';
+      const res = await fetch(`${GYM_SERVER}/send-message`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone, message, gym_id: gymId }),
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        throw new Error(d.error || 'Failed to send message');
+      }
+      return res.json();
+    },
+  });
+}
+
+export function useDirectMessages(phone?: string | null, gymId?: string | null) {
+  return useQuery({
+    queryKey: ['direct_messages', phone, gymId],
+    enabled: !!phone && !!gymId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('direct_messages')
+        .select('*')
+        .eq('gym_id', gymId!)
+        .eq('to_phone', phone!)
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      return data ?? [];
+    },
+    refetchInterval: 5000,
+  });
+}
+
+export function useInsertDirectMessage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (msg: { gym_id: string; from_id?: string; to_phone: string; message: string; direction: string }) => {
+      const { data, error } = await supabase.from('direct_messages').insert(msg).select().single();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ['direct_messages', vars.to_phone, vars.gym_id] }),
   });
 }
 
@@ -1663,6 +1724,19 @@ export function useInsertClientProfile() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['client_profiles'] });
       qc.invalidateQueries({ queryKey: ['diet_plans'] });
+    },
+  });
+}
+
+// ── PUSH TOKEN ────────────────────────────────────────────────────────────────
+export function useUpdatePushToken() {
+  return useMutation({
+    mutationFn: async ({ userId, token }: { userId: string; token: string }) => {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ push_token: token })
+        .eq('id', userId);
+      if (error) throw error;
     },
   });
 }

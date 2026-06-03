@@ -19,7 +19,8 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#0D0F14"
-      }
+      },
+      "permissions": ["RECEIVE_BOOT_COMPLETED", "VIBRATE"]
     },
     "ios": {
       "supportsTablet": false,
@@ -27,16 +28,26 @@
     },
     "plugins": [
       "expo-router",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#00A76F",
+          "sounds": []
+        }
+      ]
     ],
     "extra": {
       "supabaseUrl": "https://tacokztxcrzlomgeqfdh.supabase.co",
       "supabaseKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRhY29renR4Y3J6bG9tZ2VxZmRoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcyMjAyNTksImV4cCI6MjA5Mjc5NjI1OX0.6bOd5FbG78LKmHFFDQhsEoSoc7wlk__Wn_as2Q0sHe0",
       "gymServerUrl": "https://zenvik-gym-server-production.up.railway.app",
       "zenvikaiBackendUrl": "https://zenvik-root-server-production.up.railway.app",
+      "router": {},
       "eas": {
-        "projectId": "0beac2a5-6f44-4579-aef8-5afb58b27b35"
+        "projectId": "f000680b-e653-4589-bc33-22ffb3fb68dc"
       }
-    }
+    },
+    "owner": "krishnasai39"
   }
 }

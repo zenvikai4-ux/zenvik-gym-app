@@ -12,6 +12,7 @@ import {
 } from '@/lib/hooks';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ConfirmModal } from '@/components/ConfirmModal';
+import { ChatModal } from '@/components/ChatModal';
 import { Colors } from '@/constants/colors';
 import { useTabBarHeight } from '@/lib/useTabBarHeight';
 import * as Haptics from 'expo-haptics';
@@ -41,6 +42,7 @@ export default function TrainersScreen() {
   const [form, setForm] = useState({ name: '', email: '', phone: '', password: '', specialization: '' });
   const [formError, setFormError] = useState('');
   const [pendingDelete, setPendingDelete] = useState<any>(null);
+  const [chatTrainer, setChatTrainer] = useState<any>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [editingTrainer, setEditingTrainer] = useState<any>(null);
   const [editForm, setEditForm] = useState({ name: '', email: '', phone: '', specialization: '' });
@@ -193,6 +195,10 @@ export default function TrainersScreen() {
                   >
                     <Ionicons name="pencil-outline" size={15} color={Colors.info} />
                     <Text style={[styles.actionBtnText, { color: Colors.info }]}>Edit</Text>
+                  </Pressable>
+                  <Pressable style={[styles.actionBtn, { backgroundColor: '#25D36615', borderColor: '#25D36630' }]} onPress={() => setChatTrainer(item)}>
+                    <Ionicons name="chatbubble-outline" size={15} color="#25D366" />
+                    <Text style={[styles.actionBtnText, { color: '#25D366' }]}>Message</Text>
                   </Pressable>
                   <Pressable style={styles.actionBtn} onPress={() => setPendingDelete(item)}>
                     <Ionicons name="trash-outline" size={15} color={Colors.danger} />
@@ -373,6 +379,16 @@ export default function TrainersScreen() {
         onConfirm={handleDelete}
         onCancel={() => setPendingDelete(null)}
       />
+
+      {chatTrainer && (
+        <ChatModal
+          visible={!!chatTrainer}
+          person={chatTrainer}
+          gymId={user?.gym_id || ''}
+          userId={user?.id || ''}
+          onClose={() => setChatTrainer(null)}
+        />
+      )}
     </View>
   );
 }

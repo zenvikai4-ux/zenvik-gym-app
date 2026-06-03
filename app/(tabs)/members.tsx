@@ -1,7 +1,7 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, FlatList, Pressable, TextInput,
-  Modal, ActivityIndicator, ScrollView, Alert, Platform,
+  Modal, ActivityIndicator, ScrollView, Alert, Platform, KeyboardAvoidingView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useFocusEffect } from 'expo-router';
@@ -11,10 +11,12 @@ import {
   useMembers, useTrainers, useUpdateMember, useDeleteMember,
   useInsertActivity, useEnabledModules, useInsertMemberWithLogin,
   useBulkImportMembers, useBulkImportTrainers,
+  useDirectMessages, useInsertDirectMessage, useSendWhatsAppMessage,
 } from '@/lib/hooks';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { DatePicker } from '@/components/DatePicker';
 import { ConfirmModal } from '@/components/ConfirmModal';
+import { ChatModal } from '@/components/ChatModal';
 import { Colors } from '@/constants/colors';
 import { useTabBarHeight } from '@/lib/useTabBarHeight';
 import * as Haptics from 'expo-haptics';
@@ -361,6 +363,7 @@ export default function MembersScreen() {
   const [formError, setFormError] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<any>(null);
+  const [chatMember, setChatMember] = useState<any>(null);
 
   const filtered = useMemo(() => {
     return members.filter((m: any) => {
@@ -804,6 +807,13 @@ export default function MembersScreen() {
                 ))}
               </View>
               <Pressable
+                style={[styles.submitBtn, { backgroundColor: '#25D366' }]}
+                onPress={() => { setChatMember(selected); setSelected(null); }}
+              >
+                <Ionicons name="chatbubble-outline" size={18} color="#fff" />
+                <Text style={[styles.submitBtnText, { color: '#fff' }]}>Message Member</Text>
+              </Pressable>
+              <Pressable
                 style={[styles.submitBtn, { backgroundColor: Colors.info }]}
                 onPress={() => handleRenew(selected)}
                 disabled={updateMember.isPending}
@@ -927,6 +937,17 @@ export default function MembersScreen() {
         }}
         onCancel={() => setPendingDelete(null)}
       />
+
+      {/* Chat Modal */}
+      {chatMember && (
+        <ChatModal
+          visible={!!chatMember}
+          person={chatMember}
+          gymId={gymId || ''}
+          userId={user?.id || ''}
+          onClose={() => setChatMember(null)}
+        />
+      )}
     </View>
   );
 }

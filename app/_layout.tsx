@@ -1,5 +1,5 @@
 import React, { useEffect, Component } from "react";
-import { View, Text, ScrollView, ActivityIndicator } from "react-native";
+import { View, Text, ScrollView, ActivityIndicator, Platform } from "react-native";
 import { Slot, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
@@ -14,8 +14,20 @@ import {
   Inter_700Bold,
 } from "@expo-google-fonts/inter";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
+import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
+import { supabase } from '@/lib/supabase';
 
 SplashScreen.preventAutoHideAsync();
+
+// Configure notification handler
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+  }),
+});
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 5000, retry: 1, refetchOnWindowFocus: true } },
@@ -49,6 +61,36 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+
+  // Register push token when user logs in
+  useEffect(() => {
+    if (!user?.id) return;
+    const registerPushToken = async () => {
+      try {
+        if (!Device.isDevice) return;
+        const { status: existingStatus } = await Notifications.getPermissionsAsync();
+        let finalStatus = existingStatus;
+        if (existingStatus !== 'granted') {
+          const { status } = await Notifications.requestPermissionsAsync();
+          finalStatus = status;
+        }
+        if (finalStatus !== 'granted') return;
+        const token = (await Notifications.getExpoPushTokenAsync()).data;
+        if (token) {
+          await supabase.from('profiles').update({ push_token: token }).eq('id', user.id);
+        }
+        if (Platform.OS === 'android') {
+          Notifications.setNotificationChannelAsync('default', {
+            name: 'default',
+            importance: Notifications.AndroidImportance.MAX,
+          });
+        }
+      } catch (e) {
+        console.warn('Push token registration failed:', e);
+      }
+    };
+    registerPushToken();
+  }, [user?.id]);
 
   useEffect(() => {
     if (loading) return;
