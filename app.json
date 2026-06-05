@@ -44,9 +44,9 @@
       "zenvikaiBackendUrl": "https://zenvik-root-server-production.up.railway.app",
       "router": {},
       "eas": {
-        "projectId": "f000680b-e653-4589-bc33-22ffb3fb68dc"
+        "projectId": "0beac2a5-6f44-4579-aef8-5afb58b27b35"
       }
     },
-    "owner": "krishnasai39"
+    "owner": "zenvikais-organization"
   }
 }
