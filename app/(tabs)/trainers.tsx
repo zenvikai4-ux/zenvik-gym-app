@@ -379,7 +379,6 @@ export default function TrainersScreen() {
         onConfirm={handleDelete}
         onCancel={() => setPendingDelete(null)}
       />
-
       {chatTrainer && (
         <ChatModal
           visible={!!chatTrainer}

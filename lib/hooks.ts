@@ -153,7 +153,7 @@ export function useLeadConversations(leadId?: string | null) {
       if (error) throw error;
       return data ?? [];
     },
-    refetchInterval: 5000, // Poll every 5s for new messages
+    refetchInterval: 5000,
   });
 }
 
@@ -1029,17 +1029,50 @@ export function useBroadcastWhatsApp() {
       message: string;
       recipient_type: 'trainers' | 'clients' | 'both';
     }) => {
-      // Insert a pending log row — Railway automation server polls this
-      // table and sends WhatsApp messages using the gym's stored credentials.
+      // Get phones to broadcast to
+      const phones: string[] = [];
+
+      if (recipient_type === 'clients' || recipient_type === 'both') {
+        const { data: members } = await supabase
+          .from('members')
+          .select('phone')
+          .eq('gym_id', gym_id)
+          .eq('status', 'active')
+          .not('phone', 'is', null);
+        (members || []).forEach((m: any) => { if (m.phone) phones.push(m.phone); });
+      }
+
+      if (recipient_type === 'trainers' || recipient_type === 'both') {
+        const { data: trainers } = await supabase
+          .from('profiles')
+          .select('phone')
+          .eq('gym_id', gym_id)
+          .eq('role', 'trainer')
+          .not('phone', 'is', null);
+        (trainers || []).forEach((t: any) => { if (t.phone) phones.push(t.phone); });
+      }
+
+      if (phones.length === 0) throw new Error('No recipients found with phone numbers');
+
+      // Send via gym server broadcast endpoint
+      const GYM_SERVER = process.env.EXPO_PUBLIC_GYM_SERVER_URL || 'https://gymapp-server-production.up.railway.app';
+      const res = await fetch(`${GYM_SERVER}/broadcast`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gym_id, message, phones, sender_name }),
+      });
+
+      if (!res.ok) {
+        const d = await res.json();
+        throw new Error(d.error || 'Broadcast failed');
+      }
+
+      // Log in whatsapp_logs
       const { data, error } = await supabase
         .from('whatsapp_logs')
         .insert({
-          gym_id,
-          message,
-          status: 'pending',
-          recipient_type,
-          sender_name,
-          phone: null, // null = Railway sends to all active members of this gym
+          gym_id, message, status: 'sent',
+          recipient_type, sender_name, phone: null,
         })
         .select()
         .single();
@@ -1724,19 +1757,6 @@ export function useInsertClientProfile() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['client_profiles'] });
       qc.invalidateQueries({ queryKey: ['diet_plans'] });
-    },
-  });
-}
-
-// ── PUSH TOKEN ────────────────────────────────────────────────────────────────
-export function useUpdatePushToken() {
-  return useMutation({
-    mutationFn: async ({ userId, token }: { userId: string; token: string }) => {
-      const { error } = await supabase
-        .from('profiles')
-        .update({ push_token: token })
-        .eq('id', userId);
-      if (error) throw error;
     },
   });
 }

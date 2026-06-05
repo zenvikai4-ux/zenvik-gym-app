@@ -1,7 +1,7 @@
-import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, FlatList, Pressable, TextInput,
-  Modal, ActivityIndicator, ScrollView, Alert, Platform, KeyboardAvoidingView,
+  Modal, ActivityIndicator, ScrollView, Alert, Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useFocusEffect } from 'expo-router';
@@ -11,7 +11,7 @@ import {
   useMembers, useTrainers, useUpdateMember, useDeleteMember,
   useInsertActivity, useEnabledModules, useInsertMemberWithLogin,
   useBulkImportMembers, useBulkImportTrainers,
-  useDirectMessages, useInsertDirectMessage, useSendWhatsAppMessage,
+  useInsertLeadConversation, useSendWhatsAppMessage,
 } from '@/lib/hooks';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { DatePicker } from '@/components/DatePicker';
@@ -427,21 +427,43 @@ export default function MembersScreen() {
     });
   };
 
-  const handleRenew = (m: any) => {
-    const joiningDate = today();
-    // Extend from current expiry if still active (preserve remaining days), else from today
-    const baseDate = m.expiry_date && daysUntil(m.expiry_date) > 0 ? m.expiry_date : joiningDate;
-    const newExpiry = addDays(baseDate, PLAN_DAYS[m.plan] || 30);
-    updateMember.mutate({ id: m.id, joining_date: joiningDate, expiry_date: newExpiry, status: 'active' }, {
+  // Renewal modal
+  const [renewMember, setRenewMember] = useState<any>(null);
+  const [renewDays, setRenewDays] = useState('30');
+  const [renewCustom, setRenewCustom] = useState(false);
+  const [renewStartFrom, setRenewStartFrom] = useState<'expiry' | 'today'>('expiry');
+
+  const RENEW_OPTIONS = [
+    { label: '1 Month', days: 30 },
+    { label: '2 Months', days: 60 },
+    { label: '3 Months', days: 90 },
+    { label: '6 Months', days: 180 },
+    { label: '1 Year', days: 365 },
+    { label: 'Custom', days: 0 },
+  ];
+
+  const renewExpiry = (() => {
+    if (!renewMember) return '';
+    const days = parseInt(renewDays) || 30;
+    const base = renewStartFrom === 'expiry' && renewMember.expiry_date && daysUntil(renewMember.expiry_date) > 0
+      ? renewMember.expiry_date : today();
+    return addDays(base, days);
+  })();
+
+  const handleRenewConfirm = () => {
+    if (!renewMember) return;
+    const days = parseInt(renewDays) || 30;
+    updateMember.mutate({ id: renewMember.id, expiry_date: renewExpiry, status: 'active' }, {
       onSuccess: () => {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        setSelected(null);
         insertActivity.mutate({
           gym_id: gymId || null,
           actor_name: user?.name || 'Owner',
           action: 'Renewed membership',
-          details: `${m.name} → ${newExpiry}`,
+          details: `${renewMember.name} → ${days} days → ${renewExpiry}`,
         });
+        setRenewMember(null);
+        setSelected(null);
       },
     });
   };
@@ -807,7 +829,7 @@ export default function MembersScreen() {
                 ))}
               </View>
               <Pressable
-                style={[styles.submitBtn, { backgroundColor: '#25D366' }]}
+                style={[styles.submitBtn, { backgroundColor: '#25D366', marginBottom: 8 }]}
                 onPress={() => { setChatMember(selected); setSelected(null); }}
               >
                 <Ionicons name="chatbubble-outline" size={18} color="#fff" />
@@ -815,13 +837,15 @@ export default function MembersScreen() {
               </Pressable>
               <Pressable
                 style={[styles.submitBtn, { backgroundColor: Colors.info }]}
-                onPress={() => handleRenew(selected)}
-                disabled={updateMember.isPending}
+                onPress={() => {
+                  setRenewMember(selected);
+                  setRenewDays('30');
+                  setRenewCustom(false);
+                  setRenewStartFrom(selected?.expiry_date && daysUntil(selected.expiry_date) > 0 ? 'expiry' : 'today');
+                }}
               >
-                {updateMember.isPending
-                  ? <ActivityIndicator color="#fff" />
-                  : <><Ionicons name="refresh-outline" size={18} color="#fff" /><Text style={[styles.submitBtnText, { color: '#fff' }]}>Renew Membership</Text></>
-                }
+                <Ionicons name="refresh-outline" size={18} color="#fff" />
+                <Text style={[styles.submitBtnText, { color: '#fff' }]}>Renew Membership</Text>
               </Pressable>
               <Pressable
                 style={[styles.submitBtn, { backgroundColor: Colors.dangerMuted, marginTop: 10, borderWidth: 1, borderColor: Colors.danger + '40' }]}
@@ -938,6 +962,118 @@ export default function MembersScreen() {
         onCancel={() => setPendingDelete(null)}
       />
 
+      {/* Renewal Modal */}
+      <Modal visible={!!renewMember} animationType="slide" presentationStyle="formSheet" onRequestClose={() => setRenewMember(null)}>
+        <View style={[styles.modal, { paddingTop: insets.top + 16 }]}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Renew — {renewMember?.name}</Text>
+            <Pressable onPress={() => setRenewMember(null)}>
+              <Ionicons name="close" size={24} color={Colors.text} />
+            </Pressable>
+          </View>
+          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 16, paddingBottom: 40 }}>
+
+            {/* Current expiry info */}
+            <View style={{ backgroundColor: Colors.card, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: Colors.border, gap: 6 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <Text style={styles.formLabel}>Current Expiry</Text>
+                <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: daysUntil(renewMember?.expiry_date) <= 0 ? Colors.danger : Colors.text }}>
+                  {renewMember?.expiry_date || 'Not set'}
+                  {renewMember?.expiry_date ? ` (${daysUntil(renewMember.expiry_date) <= 0 ? 'Expired' : `${daysUntil(renewMember.expiry_date)}d left`})` : ''}
+                </Text>
+              </View>
+            </View>
+
+            {/* Start from */}
+            <View style={styles.formField}>
+              <Text style={styles.formLabel}>Start From</Text>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                {[
+                  { value: 'expiry', label: 'Current Expiry', sub: renewMember?.expiry_date && daysUntil(renewMember?.expiry_date) > 0 ? renewMember.expiry_date : 'N/A' },
+                  { value: 'today', label: 'Today', sub: today() },
+                ].map(opt => (
+                  <Pressable
+                    key={opt.value}
+                    style={[styles.formInput, { flex: 1, height: 'auto', padding: 10, borderColor: renewStartFrom === opt.value ? Colors.info : Colors.border, backgroundColor: renewStartFrom === opt.value ? Colors.info + '15' : Colors.card }]}
+                    onPress={() => setRenewStartFrom(opt.value as any)}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Ionicons name={renewStartFrom === opt.value ? 'radio-button-on' : 'radio-button-off'} size={16} color={renewStartFrom === opt.value ? Colors.info : Colors.textMuted} />
+                      <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 12, color: renewStartFrom === opt.value ? Colors.info : Colors.text }}>{opt.label}</Text>
+                    </View>
+                    <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted, marginTop: 2, marginLeft: 22 }}>{opt.sub}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
+            {/* Duration options */}
+            <View style={styles.formField}>
+              <Text style={styles.formLabel}>Duration</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {RENEW_OPTIONS.map(opt => (
+                  <Pressable
+                    key={opt.label}
+                    style={[styles.planChip,
+                      (opt.days > 0 ? renewDays === String(opt.days) && !renewCustom : renewCustom) && styles.planChipActive
+                    ]}
+                    onPress={() => {
+                      if (opt.days === 0) {
+                        setRenewCustom(true);
+                        setRenewDays('');
+                      } else {
+                        setRenewCustom(false);
+                        setRenewDays(String(opt.days));
+                      }
+                    }}
+                  >
+                    <Text style={[styles.planChipText,
+                      (opt.days > 0 ? renewDays === String(opt.days) && !renewCustom : renewCustom) && { color: Colors.primary }
+                    ]}>{opt.label}</Text>
+                    {opt.days > 0 && <Text style={[styles.planChipDays,
+                      (renewDays === String(opt.days) && !renewCustom) && { color: Colors.primary }
+                    ]}>{opt.days}d</Text>}
+                  </Pressable>
+                ))}
+              </View>
+              {renewCustom && (
+                <TextInput
+                  style={[styles.formInput, { marginTop: 10 }]}
+                  placeholder="Enter number of days (e.g. 45)"
+                  placeholderTextColor={Colors.textMuted}
+                  keyboardType="numeric"
+                  value={renewDays}
+                  onChangeText={setRenewDays}
+                  autoFocus
+                />
+              )}
+            </View>
+
+            {/* New expiry preview */}
+            <View style={{ backgroundColor: Colors.primaryMuted, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: Colors.primary + '40', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <View>
+                <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 12, color: Colors.textMuted }}>New Expiry Date</Text>
+                <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 20, color: Colors.primary, marginTop: 2 }}>{renewExpiry || '—'}</Text>
+                <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted, marginTop: 2 }}>
+                  {renewDays} days from {renewStartFrom === 'expiry' && renewMember?.expiry_date && daysUntil(renewMember?.expiry_date) > 0 ? renewMember.expiry_date : today()}
+                </Text>
+              </View>
+              <Ionicons name="calendar-outline" size={28} color={Colors.primary} />
+            </View>
+
+            <Pressable
+              style={[styles.submitBtn, { backgroundColor: Colors.info, opacity: updateMember.isPending ? 0.6 : 1 }]}
+              onPress={handleRenewConfirm}
+              disabled={updateMember.isPending || !renewDays}
+            >
+              {updateMember.isPending
+                ? <ActivityIndicator color="#fff" />
+                : <><Ionicons name="checkmark-circle-outline" size={18} color="#fff" /><Text style={[styles.submitBtnText, { color: '#fff' }]}>Confirm Renewal</Text></>}
+            </Pressable>
+
+          </ScrollView>
+        </View>
+      </Modal>
       {/* Chat Modal */}
       {chatMember && (
         <ChatModal

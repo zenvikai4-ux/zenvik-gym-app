@@ -37,18 +37,14 @@ export function ChatModal({ visible, person, gymId, userId, onClose }: Props) {
     if (!message.trim() || !person?.phone) return;
     setSending(true);
     try {
-      // Send via WhatsApp API
       await sendWA.mutateAsync({ phone: person.phone, message: message.trim(), gymId });
-
-      // Log in DB
       await insertMsg.mutateAsync({
         gym_id: gymId,
         from_id: userId,
-        to_phone: person.phone,
+        to_phone: person.phone.replace(/\D/g, '').slice(-10),
         message: message.trim(),
         direction: 'outbound',
       });
-
       setMessage('');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 300);
@@ -63,8 +59,6 @@ export function ChatModal({ visible, person, gymId, userId, onClose }: Props) {
     <Modal visible={visible} animationType="slide" presentationStyle="formSheet" onRequestClose={onClose}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={[styles.container, { paddingTop: insets.top + 8 }]}>
-
-          {/* Header */}
           <View style={styles.header}>
             <Pressable onPress={onClose} style={styles.closeBtn}>
               <Ionicons name="chevron-down" size={22} color={Colors.text} />
@@ -78,16 +72,10 @@ export function ChatModal({ visible, person, gymId, userId, onClose }: Props) {
             </View>
           </View>
 
-          {/* Messages */}
           {isLoading ? (
             <ActivityIndicator style={{ flex: 1 }} color={Colors.primary} />
           ) : (
-            <ScrollView
-              ref={scrollRef}
-              style={{ flex: 1 }}
-              contentContainerStyle={{ padding: 16, gap: 8, paddingBottom: 20 }}
-              showsVerticalScrollIndicator={false}
-            >
+            <ScrollView ref={scrollRef} style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 8, paddingBottom: 20 }} showsVerticalScrollIndicator={false}>
               {messages.length === 0 ? (
                 <View style={{ alignItems: 'center', paddingTop: 60 }}>
                   <Ionicons name="chatbubbles-outline" size={48} color={Colors.textMuted} />
@@ -97,13 +85,7 @@ export function ChatModal({ visible, person, gymId, userId, onClose }: Props) {
                 </View>
               ) : (
                 messages.map((msg: any) => (
-                  <View
-                    key={msg.id}
-                    style={[
-                      styles.bubble,
-                      msg.direction === 'outbound' ? styles.bubbleOut : styles.bubbleIn,
-                    ]}
-                  >
+                  <View key={msg.id} style={[styles.bubble, msg.direction === 'outbound' ? styles.bubbleOut : styles.bubbleIn]}>
                     <Text style={styles.bubbleText}>{msg.message}</Text>
                     <Text style={styles.bubbleTime}>
                       {new Date(msg.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
@@ -114,7 +96,6 @@ export function ChatModal({ visible, person, gymId, userId, onClose }: Props) {
             </ScrollView>
           )}
 
-          {/* Input */}
           <View style={styles.inputRow}>
             <TextInput
               style={styles.input}
@@ -125,17 +106,10 @@ export function ChatModal({ visible, person, gymId, userId, onClose }: Props) {
               multiline
               maxLength={1000}
             />
-            <Pressable
-              style={[styles.sendBtn, (!message.trim() || sending) && { opacity: 0.4 }]}
-              onPress={handleSend}
-              disabled={!message.trim() || sending}
-            >
-              {sending
-                ? <ActivityIndicator size="small" color="#fff" />
-                : <Ionicons name="send" size={18} color="#fff" />}
+            <Pressable style={[styles.sendBtn, (!message.trim() || sending) && { opacity: 0.4 }]} onPress={handleSend} disabled={!message.trim() || sending}>
+              {sending ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="send" size={18} color="#fff" />}
             </Pressable>
           </View>
-
         </View>
       </KeyboardAvoidingView>
     </Modal>

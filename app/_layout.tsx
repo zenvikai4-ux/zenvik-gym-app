@@ -62,6 +62,16 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   const segments = useSegments();
   const router = useRouter();
 
+  useEffect(() => {
+    if (loading) return;
+    const inTabs = segments[0] === "(tabs)";
+    if (!user && inTabs) {
+      router.replace("/login");
+    } else if (user && !inTabs) {
+      router.replace("/(tabs)");
+    }
+  }, [user, loading, segments]);
+
   // Register push token when user logs in
   useEffect(() => {
     if (!user?.id) return;
@@ -86,21 +96,11 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
           });
         }
       } catch (e) {
-        console.warn('Push token registration failed:', e);
+        // Push notifications not available in Expo Go — ignore
       }
     };
     registerPushToken();
   }, [user?.id]);
-
-  useEffect(() => {
-    if (loading) return;
-    const inTabs = segments[0] === "(tabs)";
-    if (!user && inTabs) {
-      router.replace("/login");
-    } else if (user && !inTabs) {
-      router.replace("/(tabs)");
-    }
-  }, [user, loading, segments]);
 
   // While loading, show a dark spinner - never white
   if (loading) {

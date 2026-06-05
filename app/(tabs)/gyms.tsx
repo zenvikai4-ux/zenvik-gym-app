@@ -131,6 +131,9 @@ export default function GymsScreen() {
   const [showPass, setShowPass] = useState(false);
   const [form, setForm] = useState({ name: '', owner_name: '', email: '', phone: '', password: '', address: '', whatsapp_number: '', instagram_handle: '', capacity: '' });
   const [formError, setFormError] = useState('');
+  const [leadManagement, setLeadManagement] = useState(false);
+  const [waPhoneId, setWaPhoneId] = useState('');
+  const [waToken, setWaToken] = useState('');
 
   const [pricing, setPricing] = useState({
     memberCount: '100',
@@ -274,8 +277,36 @@ export default function GymsScreen() {
         action: 'Created gym account',
         details: `${form.name} (owner: ${form.owner_name})`,
       });
+
+      // Save WA credentials if lead management enabled
+      if (leadManagement && waPhoneId && waToken) {
+        await supabase.from('gyms').update({
+          whatsapp_phone_id: waPhoneId.trim(),
+          whatsapp_token: waToken.trim(),
+        }).eq('id', gymData.id);
+      }
+
+      // Auto-assign Lead Management module if selected
+      if (leadManagement) {
+        const { data: leadModule } = await supabase
+          .from('modules')
+          .select('id')
+          .ilike('name', '%lead%')
+          .maybeSingle();
+        if (leadModule?.id) {
+          await supabase.from('gym_modules').upsert({
+            gym_id: gymData.id,
+            module_id: leadModule.id,
+            is_enabled: true,
+          });
+        }
+      }
+
       setShowAdd(false);
       setForm({ name: '', owner_name: '', email: '', phone: '', password: '', address: '', whatsapp_number: '', instagram_handle: '', capacity: '' });
+      setLeadManagement(false);
+      setWaPhoneId('');
+      setWaToken('');
     } catch (e: any) {
       setFormError(e.message || 'Failed to create gym');
     }
@@ -463,6 +494,62 @@ export default function GymsScreen() {
                   <Switch value={pricing.openSundays} onValueChange={v => setPricing(p => ({ ...p, openSundays: v }))} trackColor={{ true: Colors.primary }} />
                 </View>
               </View>
+              {/* Lead Management Module Selection */}
+              <View style={{ backgroundColor: leadManagement ? Colors.primaryMuted : Colors.secondary, borderRadius: 12, padding: 14, borderWidth: 1.5, borderColor: leadManagement ? Colors.primary : Colors.border, gap: 12 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 14, color: Colors.text }}>WhatsApp Lead Management</Text>
+                    <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.textMuted, marginTop: 2 }}>
+                      AI bot engages unknown numbers, creates leads, pipeline management
+                    </Text>
+                  </View>
+                  <Switch
+                    value={leadManagement}
+                    onValueChange={v => { setLeadManagement(v); if (!v) { setWaPhoneId(''); setWaToken(''); } }}
+                    trackColor={{ true: Colors.primary, false: Colors.border }}
+                  />
+                </View>
+                {leadManagement && (
+                  <>
+                    <View style={{ backgroundColor: Colors.warning + '15', borderRadius: 8, padding: 10, borderWidth: 1, borderColor: Colors.warning + '40' }}>
+                      <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.warning, lineHeight: 18 }}>
+                        ⚠️ Lead Management requires a dedicated WhatsApp number for this gym. Get a SIM, register it on your Meta account, then enter the credentials below.
+                      </Text>
+                    </View>
+                    <View>
+                      <Text style={styles.fieldLabel}>Phone Number ID</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="From Meta → WhatsApp → API Setup"
+                        placeholderTextColor={Colors.textMuted}
+                        value={waPhoneId}
+                        onChangeText={setWaPhoneId}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                      />
+                    </View>
+                    <View>
+                      <Text style={styles.fieldLabel}>Permanent Access Token</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="EAAxxxx..."
+                        placeholderTextColor={Colors.textMuted}
+                        value={waToken}
+                        onChangeText={setWaToken}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        secureTextEntry
+                      />
+                    </View>
+                  </>
+                )}
+                {!leadManagement && (
+                  <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.textMuted }}>
+                    ✅ Uses your central Zenvik WhatsApp number. Member queries still answered by AI.
+                  </Text>
+                )}
+              </View>
+
               <Pressable
                 style={[styles.submitBtn, adding && { opacity: 0.6 }]}
                 onPress={handleAdd}

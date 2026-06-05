@@ -11,6 +11,7 @@ import {
   useInsertActivity, useEnabledModules, useLeadConversations,
   useInsertLeadConversation, useSendWhatsAppMessage,
 } from '@/lib/hooks';
+import { supabase } from '@/lib/supabase';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { Colors } from '@/constants/colors';
@@ -87,31 +88,17 @@ function LeadDetailModal({
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
 
-  const isManualStage = MANUAL_STAGES.includes(lead?.status);
-  const canReply = !['new', 'ai_chatting'].includes(lead?.status);
+  const MANUAL_STAGES = ['handoff', 'visit_scheduled', 'visited', 'converted', 'lost'];
+  const canReply = lead && !['new', 'ai_chatting'].includes(lead.status);
 
   const handleSend = async () => {
     if (!replyText.trim() || !lead) return;
     setSending(true);
     try {
-      // Send WhatsApp message
       await sendWA.mutateAsync({ phone: lead.phone, message: replyText.trim(), gymId: lead.gym_id });
-
-      // Log in conversation history
-      await insertConvo.mutateAsync({
-        lead_id: lead.id,
-        gym_id: lead.gym_id,
-        role: 'owner',
-        message: replyText.trim(),
-      });
-
-      // Update owner_last_replied_at on lead
-      const { createClient } = await import('@supabase/supabase-js');
-      const { supabase } = await import('@/lib/supabase');
+      await insertConvo.mutateAsync({ lead_id: lead.id, gym_id: lead.gym_id, role: 'owner', message: replyText.trim() });
       await supabase.from('leads').update({ owner_last_replied_at: new Date().toISOString() }).eq('id', lead.id);
-
       setReplyText('');
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 300);
     } catch (e: any) {
       Alert.alert('Failed to send', e.message);
@@ -134,17 +121,14 @@ function LeadDetailModal({
             </Pressable>
           </View>
 
-          <ScrollView
-            ref={scrollRef}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ padding: 16, gap: 16, paddingBottom: canReply ? 80 : 40 }}
-          >
+          <ScrollView ref={scrollRef} showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 16, gap: 16, paddingBottom: canReply ? 80 : 40 }}>
+
             {/* Handoff alert */}
             {lead?.status === 'handoff' && (
               <View style={detailStyles.handoffAlert}>
                 <Ionicons name="alert-circle" size={18} color="#E1306C" />
                 <Text style={detailStyles.handoffText}>
-                  AI has handed off this lead — they're ready to speak with you. Reply below to message them directly.
+                  AI has handed off this lead — they're ready to speak with you. Reply below!
                 </Text>
               </View>
             )}
@@ -153,121 +137,81 @@ function LeadDetailModal({
             {['new', 'ai_chatting'].includes(lead?.status) && (
               <View style={{ backgroundColor: Colors.info + '15', borderRadius: 10, padding: 12, flexDirection: 'row', gap: 8, alignItems: 'center', borderWidth: 1, borderColor: Colors.info + '30' }}>
                 <Ionicons name="eye-outline" size={16} color={Colors.info} />
-                <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.info, flex: 1 }}>
-                  AI is handling this conversation. You can observe the chat below.
-                </Text>
+                <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.info, flex: 1 }}>AI is handling this conversation. You can observe below.</Text>
               </View>
             )}
 
-            {/* Lead info card */}
-            <View style={detailStyles.card}>
-              <View style={detailStyles.infoRow}>
-                <Ionicons name={SOURCE_ICONS[lead?.source] as any || 'person-outline'} size={15}
-                  color={lead?.source === 'whatsapp' ? '#25D366' : lead?.source === 'instagram' ? '#E1306C' : Colors.textMuted} />
-                <Text style={detailStyles.infoLabel}>Source</Text>
-                <Text style={detailStyles.infoValue}>{lead?.source?.replace('_', ' ')}</Text>
-              </View>
-              <View style={detailStyles.divider} />
-              <View style={detailStyles.infoRow}>
-                <Ionicons name="call-outline" size={15} color={Colors.textMuted} />
-                <Text style={detailStyles.infoLabel}>Phone</Text>
-                <Pressable onPress={() => Linking.openURL(`tel:${lead?.phone}`)}>
-                  <Text style={[detailStyles.infoValue, { color: Colors.info }]}>{lead?.phone}</Text>
-                </Pressable>
-              </View>
-              {lead?.goal ? <>
-                <View style={detailStyles.divider} />
+          {/* Lead info */}
+          <View style={detailStyles.card}>
+            {[
+              { icon: SOURCE_ICONS[lead?.source] || 'person-outline', label: 'Source', value: lead?.source?.replace('_', ' '), color: lead?.source === 'whatsapp' ? '#25D366' : lead?.source === 'instagram' ? '#E1306C' : Colors.textMuted },
+              { icon: 'call-outline', label: 'Phone', value: lead?.phone, color: Colors.textMuted },
+              lead?.goal && { icon: 'fitness-outline', label: 'Goal', value: lead.goal, color: Colors.textMuted },
+              lead?.notes && { icon: 'document-text-outline', label: 'Notes', value: lead.notes, color: Colors.textMuted },
+            ].filter(Boolean).map((item: any, i) => (
+              <View key={i}>
+                {i > 0 && <View style={detailStyles.divider} />}
                 <View style={detailStyles.infoRow}>
-                  <Ionicons name="fitness-outline" size={15} color={Colors.textMuted} />
-                  <Text style={detailStyles.infoLabel}>Goal</Text>
-                  <Text style={detailStyles.infoValue}>{lead?.goal}</Text>
+                  <Ionicons name={item.icon as any} size={15} color={item.color} />
+                  <Text style={detailStyles.infoLabel}>{item.label}</Text>
+                  <Text style={detailStyles.infoValue}>{item.value}</Text>
                 </View>
-              </> : null}
-              {lead?.notes ? <>
-                <View style={detailStyles.divider} />
-                <View style={detailStyles.infoRow}>
-                  <Ionicons name="document-text-outline" size={15} color={Colors.textMuted} />
-                  <Text style={detailStyles.infoLabel}>Notes</Text>
-                  <Text style={[detailStyles.infoValue, { flex: 1 }]}>{lead?.notes}</Text>
-                </View>
-              </> : null}
-            </View>
+              </View>
+            ))}
+          </View>
 
-            {/* Stage card */}
-            <View style={detailStyles.card}>
-              <Text style={detailStyles.sectionTitle}>Current Stage</Text>
-              <View style={[detailStyles.stagePill, { backgroundColor: STATUS_COLORS[lead?.status as LeadStatus] + '20' }]}>
-                <Text style={[detailStyles.stagePillText, { color: STATUS_COLORS[lead?.status as LeadStatus] }]}>
-                  {STATUS_LABELS[lead?.status as LeadStatus]}
-                </Text>
-              </View>
-              <Text style={detailStyles.stageHint}>
-                {MANUAL_STAGES.includes(lead?.status)
-                  ? '👤 This stage is managed manually by you.'
-                  : '🤖 This stage is managed automatically by AI.'}
+          {/* Stage */}
+          <View style={detailStyles.card}>
+            <Text style={detailStyles.sectionTitle}>Stage</Text>
+            <View style={[detailStyles.stagePill, { backgroundColor: STATUS_COLORS[lead?.status as LeadStatus] + '20' }]}>
+              <Text style={[detailStyles.stagePillText, { color: STATUS_COLORS[lead?.status as LeadStatus] }]}>
+                {STATUS_LABELS[lead?.status as LeadStatus]}
               </Text>
             </View>
+            <Text style={detailStyles.stageHint}>
+              {MANUAL_STAGES.includes(lead?.status) ? '👤 Managed by you.' : '🤖 Managed by AI.'}
+            </Text>
+          </View>
 
-            {/* Manual stage movement */}
-            {MANUAL_STAGES.includes(lead?.status) && (
-              <View style={detailStyles.card}>
-                <Text style={detailStyles.sectionTitle}>Move to Stage</Text>
-                <View style={detailStyles.stageButtons}>
-                  {MANUAL_STAGES.map(s => (
-                    <Pressable
-                      key={s}
-                      style={[
-                        detailStyles.stageBtn,
-                        lead?.status === s && { backgroundColor: STATUS_COLORS[s] + '20', borderColor: STATUS_COLORS[s] },
-                      ]}
-                      onPress={() => { if (lead?.status !== s) onUpdateStatus(s); }}
-                    >
-                      <Text style={[detailStyles.stageBtnText, lead?.status === s && { color: STATUS_COLORS[s], fontFamily: 'Inter_600SemiBold' }]}>
-                        {STATUS_LABELS[s]}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
+          {/* Manual stage movement */}
+          {MANUAL_STAGES.includes(lead?.status) && (
+            <View style={detailStyles.card}>
+              <Text style={detailStyles.sectionTitle}>Move to Stage</Text>
+              <View style={detailStyles.stageButtons}>
+                {(MANUAL_STAGES as LeadStatus[]).map(s => (
+                  <Pressable key={s} style={[detailStyles.stageBtn, lead?.status === s && { backgroundColor: STATUS_COLORS[s] + '20', borderColor: STATUS_COLORS[s] }]} onPress={() => { if (lead?.status !== s) onUpdateStatus(s); }}>
+                    <Text style={[detailStyles.stageBtnText, lead?.status === s && { color: STATUS_COLORS[s], fontFamily: 'Inter_600SemiBold' }]}>{STATUS_LABELS[s]}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          )}
+
+          {/* Conversation */}
+          <View style={detailStyles.card}>
+            <Text style={detailStyles.sectionTitle}>{canReply ? 'Conversation' : 'AI Conversation'}</Text>
+            {loadingConvos ? <ActivityIndicator color={Colors.primary} /> : conversations.length === 0 ? (
+              <Text style={detailStyles.emptyConvo}>No messages yet.</Text>
+            ) : (
+              <View style={{ gap: 8 }}>
+                {conversations.map((msg: any) => (
+                  <View key={msg.id} style={[detailStyles.bubble,
+                    msg.role === 'ai' ? detailStyles.bubbleAI
+                    : msg.role === 'owner' ? { backgroundColor: '#25D36620', alignSelf: 'flex-end' as const, borderBottomRightRadius: 4 }
+                    : detailStyles.bubbleLead,
+                  ]}>
+                    <Text style={detailStyles.bubbleRole}>{msg.role === 'ai' ? '🤖 AI' : msg.role === 'owner' ? '👤 You' : '💬 Lead'}</Text>
+                    <Text style={detailStyles.bubbleText}>{msg.message}</Text>
+                    <Text style={detailStyles.bubbleTime}>{new Date(msg.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</Text>
+                  </View>
+                ))}
               </View>
             )}
-
-            {/* Conversation history */}
-            <View style={detailStyles.card}>
-              <Text style={detailStyles.sectionTitle}>
-                {canReply ? 'Conversation' : 'AI Conversation'}
-              </Text>
-              {loadingConvos ? (
-                <ActivityIndicator color={Colors.primary} style={{ marginVertical: 12 }} />
-              ) : conversations.length === 0 ? (
-                <Text style={detailStyles.emptyConvo}>No conversation yet.</Text>
-              ) : (
-                <View style={{ gap: 8 }}>
-                  {conversations.map((msg: any) => (
-                    <View
-                      key={msg.id}
-                      style={[
-                        detailStyles.bubble,
-                        msg.role === 'ai' ? detailStyles.bubbleAI
-                        : msg.role === 'owner' ? detailStyles.bubbleOwner
-                        : detailStyles.bubbleLead,
-                      ]}
-                    >
-                      <Text style={detailStyles.bubbleRole}>
-                        {msg.role === 'ai' ? '🤖 AI' : msg.role === 'owner' ? '👤 You' : '💬 Lead'}
-                      </Text>
-                      <Text style={detailStyles.bubbleText}>{msg.message}</Text>
-                      <Text style={detailStyles.bubbleTime}>
-                        {new Date(msg.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-              )}
-            </View>
+          </View>
 
           </ScrollView>
 
-          {/* Reply box — shown for all stages except new and ai_chatting */}
+          {/* Reply box for manual stages */}
           {canReply && (
             <View style={{ flexDirection: 'row', gap: 8, padding: 12, borderTopWidth: 1, borderTopColor: Colors.border, backgroundColor: Colors.background }}>
               <TextInput
@@ -279,15 +223,14 @@ function LeadDetailModal({
                 multiline
               />
               <Pressable
-                style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: sending || !replyText.trim() ? Colors.border : Colors.primary, alignItems: 'center', justifyContent: 'center' }}
+                style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: !replyText.trim() || sending ? Colors.border : Colors.primary, alignItems: 'center', justifyContent: 'center' }}
                 onPress={handleSend}
-                disabled={sending || !replyText.trim()}
+                disabled={!replyText.trim() || sending}
               >
                 {sending ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="send" size={18} color="#fff" />}
               </Pressable>
             </View>
           )}
-
         </View>
       </KeyboardAvoidingView>
     </Modal>
@@ -717,7 +660,6 @@ const detailStyles = StyleSheet.create({
   bubble: { borderRadius: 12, padding: 10, maxWidth: '85%', gap: 4 },
   bubbleAI: { backgroundColor: Colors.info + '15', alignSelf: 'flex-start' },
   bubbleLead: { backgroundColor: Colors.primaryMuted, alignSelf: 'flex-end' },
-  bubbleOwner: { backgroundColor: '#25D36620', alignSelf: 'flex-end', borderWidth: 1, borderColor: '#25D36640' },
   bubbleRole: { fontFamily: 'Inter_600SemiBold', fontSize: 11, color: Colors.textMuted },
   bubbleText: { fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.text, lineHeight: 18 },
   bubbleTime: { fontFamily: 'Inter_400Regular', fontSize: 10, color: Colors.textMuted, alignSelf: 'flex-end' },

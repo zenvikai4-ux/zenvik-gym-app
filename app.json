@@ -19,8 +19,7 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#0D0F14"
-      },
-      "permissions": ["RECEIVE_BOOT_COMPLETED", "VIBRATE"]
+      }
     },
     "ios": {
       "supportsTablet": false,
