@@ -172,7 +172,7 @@ export function useInsertLeadConversation() {
 export function useSendWhatsAppMessage() {
   return useMutation({
     mutationFn: async ({ phone, message, gymId }: { phone: string; message: string; gymId: string }) => {
-      const GYM_SERVER = process.env.EXPO_PUBLIC_GYM_SERVER_URL || 'https://gymapp-server-production.up.railway.app';
+      const GYM_SERVER = process.env.EXPO_PUBLIC_GYM_SERVER_URL || 'https://zenvik-gym-server-production.up.railway.app';
       const res = await fetch(`${GYM_SERVER}/send-message`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -316,7 +316,7 @@ export function useInsertMember() {
       if (error) throw error;
       // Trigger welcome message
       if (data?.id && member.gym_id) {
-        const GYM_SERVER = process.env.EXPO_PUBLIC_GYM_SERVER_URL || 'https://gymapp-server-production.up.railway.app';
+        const GYM_SERVER = process.env.EXPO_PUBLIC_GYM_SERVER_URL || 'https://zenvik-gym-server-production.up.railway.app';
         fetch(`${GYM_SERVER}/member/welcome`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1055,7 +1055,7 @@ export function useBroadcastWhatsApp() {
       if (phones.length === 0) throw new Error('No recipients found with phone numbers');
 
       // Send via gym server broadcast endpoint
-      const GYM_SERVER = process.env.EXPO_PUBLIC_GYM_SERVER_URL || 'https://gymapp-server-production.up.railway.app';
+      const GYM_SERVER = process.env.EXPO_PUBLIC_GYM_SERVER_URL || 'https://zenvik-gym-server-production.up.railway.app';
       const res = await fetch(`${GYM_SERVER}/broadcast`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
