@@ -100,6 +100,23 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
       }
     };
     registerPushToken();
+
+    // Listen for notifications received while app is open (foreground)
+    const foregroundSub = Notifications.addNotificationReceivedListener(notification => {
+      console.log('📩 Notification received in foreground:', notification.request.content.title);
+    });
+
+    // Listen for user tapping a notification
+    const responseSub = Notifications.addNotificationResponseReceivedListener(response => {
+      console.log('👆 Notification tapped:', response.notification.request.content.title);
+      // Navigate to notifications tab when user taps
+      router.push('/(tabs)/notifications');
+    });
+
+    return () => {
+      foregroundSub.remove();
+      responseSub.remove();
+    };
   }, [user?.id]);
 
   // While loading, show a dark spinner - never white

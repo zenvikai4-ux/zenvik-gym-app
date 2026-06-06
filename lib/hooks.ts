@@ -859,6 +859,7 @@ export function useNotifications(memberId?: string | null, gymId?: string | null
       if (error) throw error;
       return data ?? [];
     },
+    refetchInterval: 10000, // refresh every 10 seconds for real-time feel
   });
 }
 

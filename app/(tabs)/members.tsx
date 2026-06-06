@@ -178,14 +178,24 @@ function ImportModal({ visible, onClose, gymId, trainerList }: {
         setResult(r);
         if (r.success > 0) {
           setImportedRows(rows.slice(0, r.success));
-          setShowCredModal(true);
+          // Only show credential modal if Client Login module is enabled
+          const { data: mods } = await supabase.from('gym_modules')
+            .select('is_enabled, module:modules(name)')
+            .eq('gym_id', gymId).eq('is_enabled', true);
+          const hasClientLogin = (mods || []).some((m: any) => m.module?.name?.toLowerCase().includes('client'));
+          if (hasClientLogin) setShowCredModal(true);
         }
       } else {
         const r = await bulkImportTrainers.mutateAsync({ gym_id: gymId, rows: rows as any });
         setResult(r);
         if (r.success > 0) {
           setImportedRows(rows.slice(0, r.success));
-          setShowCredModal(true);
+          // Only show credential modal if Trainer Login module is enabled
+          const { data: mods } = await supabase.from('gym_modules')
+            .select('is_enabled, module:modules(name)')
+            .eq('gym_id', gymId).eq('is_enabled', true);
+          const hasTrainerLogin = (mods || []).some((m: any) => m.module?.name?.toLowerCase().includes('trainer'));
+          if (hasTrainerLogin) setShowCredModal(true);
         }
       }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);

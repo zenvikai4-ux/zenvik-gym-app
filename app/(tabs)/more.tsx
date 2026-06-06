@@ -1748,14 +1748,14 @@ function WhatsAppOwnerSection({ onClose }: { onClose: () => void }) {
   const { data: templates = [], isLoading: loadingTemplates } = useWhatsappTemplates();
   const { data: logs = [], isLoading: loadingLogs } = useWhatsappLogs();
   const updateTemplate = useUpdateWhatsappTemplate();
-  const insertLog = useInsertWhatsappLog();
+  const broadcast = useBroadcastWhatsApp();
 
   const [tab, setTab] = useState<'triggers' | 'broadcast' | 'log'>('triggers');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editMsg, setEditMsg] = useState('');
   const [editError, setEditError] = useState('');
   const [broadcastMsg, setBroadcastMsg] = useState('');
-  const [broadcastPhone, setBroadcastPhone] = useState('');
+  const [recipientType, setRecipientType] = useState<'clients' | 'trainers' | 'both'>('clients');
   const [broadcastError, setBroadcastError] = useState('');
   const [broadcastSuccess, setBroadcastSuccess] = useState(false);
 
@@ -1781,13 +1781,12 @@ function WhatsAppOwnerSection({ onClose }: { onClose: () => void }) {
     setBroadcastSuccess(false);
     if (!broadcastMsg.trim()) { setBroadcastError('Message is required'); return; }
     if (!gymId) { setBroadcastError('Gym not found'); return; }
-    insertLog.mutate(
-      { gym_id: gymId, message: broadcastMsg.trim(), phone: broadcastPhone.trim() || undefined, status: 'pending' },
+    broadcast.mutate(
+      { gym_id: gymId, message: broadcastMsg.trim(), sender_name: user?.gym_name || 'Gym', recipient_type: recipientType },
       {
         onSuccess: () => {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           setBroadcastMsg('');
-          setBroadcastPhone('');
           setBroadcastSuccess(true);
         },
         onError: (e: any) => setBroadcastError(e.message),
@@ -1907,17 +1906,32 @@ function WhatsAppOwnerSection({ onClose }: { onClose: () => void }) {
         <ScrollView contentContainerStyle={{ padding: 16, gap: 10, paddingBottom: insets.bottom + 20 }}>
           <View style={[section.card, { gap: 10 }]}>
             <Text style={analytics.sectionTitle}>Send Broadcast Message</Text>
-            <TextInput
-              style={section.input}
-              placeholder="Phone Number (optional)"
-              placeholderTextColor={Colors.textMuted}
-              keyboardType="phone-pad"
-              value={broadcastPhone}
-              onChangeText={setBroadcastPhone}
-            />
+
+            {/* Recipient selector */}
+            <View>
+              <Text style={[section.fieldLabel, { marginBottom: 6 }]}>Send To</Text>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                {([
+                  { value: 'clients', label: 'Members' },
+                  { value: 'trainers', label: 'Trainers' },
+                  { value: 'both', label: 'Both' },
+                ] as const).map(opt => (
+                  <Pressable
+                    key={opt.value}
+                    style={{ flex: 1, height: 36, borderRadius: 8, alignItems: 'center', justifyContent: 'center', borderWidth: 1,
+                      backgroundColor: recipientType === opt.value ? Colors.primaryMuted : Colors.secondary,
+                      borderColor: recipientType === opt.value ? Colors.primary : Colors.border }}
+                    onPress={() => setRecipientType(opt.value)}
+                  >
+                    <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 12, color: recipientType === opt.value ? Colors.primary : Colors.textSecondary }}>{opt.label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
             <TextInput
               style={[section.input, { height: 100, textAlignVertical: 'top', paddingTop: 10 }]}
-              placeholder={`Message * (use {member_name}, {gym_name}, {expiry_date})`}
+              placeholder="Type your message..."
               placeholderTextColor={Colors.textMuted}
               multiline
               value={broadcastMsg}
@@ -1932,15 +1946,15 @@ function WhatsAppOwnerSection({ onClose }: { onClose: () => void }) {
             {broadcastSuccess && (
               <View style={{ flexDirection: 'row', gap: 8, backgroundColor: Colors.primaryMuted, borderRadius: 10, padding: 10, borderWidth: 1, borderColor: Colors.primary + '40' }}>
                 <Ionicons name="checkmark-circle-outline" size={16} color={Colors.primary} />
-                <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.primary }}>Message queued for delivery!</Text>
+                <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.primary }}>Broadcast sent successfully!</Text>
               </View>
             )}
             <Pressable
-              style={[section.submitBtn, { backgroundColor: '#25D366' }]}
+              style={[section.submitBtn, { backgroundColor: '#25D366', opacity: broadcast.isPending || !broadcastMsg.trim() ? 0.5 : 1 }]}
               onPress={handleBroadcast}
-              disabled={insertLog.isPending}
+              disabled={broadcast.isPending || !broadcastMsg.trim()}
             >
-              {insertLog.isPending
+              {broadcast.isPending
                 ? <ActivityIndicator color="#fff" />
                 : (
                   <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
