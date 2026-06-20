@@ -1030,37 +1030,42 @@ export function useBroadcastWhatsApp() {
       message: string;
       recipient_type: 'trainers' | 'clients' | 'both';
     }) => {
-      // Get phones to broadcast to
-      const phones: string[] = [];
+      // Get name + phone pairs to broadcast to — each recipient must get
+      // their OWN name in the template, not a single shared sender_name.
+      const recipients: { name: string; phone: string }[] = [];
 
       if (recipient_type === 'clients' || recipient_type === 'both') {
         const { data: members } = await supabase
           .from('members')
-          .select('phone')
+          .select('name, phone')
           .eq('gym_id', gym_id)
           .eq('status', 'active')
           .not('phone', 'is', null);
-        (members || []).forEach((m: any) => { if (m.phone) phones.push(m.phone); });
+        (members || []).forEach((m: any) => {
+          if (m.phone) recipients.push({ name: m.name || 'Member', phone: m.phone });
+        });
       }
 
       if (recipient_type === 'trainers' || recipient_type === 'both') {
         const { data: trainers } = await supabase
           .from('profiles')
-          .select('phone')
+          .select('name, phone')
           .eq('gym_id', gym_id)
           .eq('role', 'trainer')
           .not('phone', 'is', null);
-        (trainers || []).forEach((t: any) => { if (t.phone) phones.push(t.phone); });
+        (trainers || []).forEach((t: any) => {
+          if (t.phone) recipients.push({ name: t.name || 'Trainer', phone: t.phone });
+        });
       }
 
-      if (phones.length === 0) throw new Error('No recipients found with phone numbers');
+      if (recipients.length === 0) throw new Error('No recipients found with phone numbers');
 
       // Send via gym server broadcast endpoint
       const GYM_SERVER = process.env.EXPO_PUBLIC_GYM_SERVER_URL || 'https://zenvik-gym-server-production.up.railway.app';
       const res = await fetch(`${GYM_SERVER}/broadcast`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ gym_id, message, phones, sender_name }),
+        body: JSON.stringify({ gym_id, message, recipients }),
       });
 
       if (!res.ok) {
