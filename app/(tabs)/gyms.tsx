@@ -142,7 +142,7 @@ export default function GymsScreen() {
     openSundays: true,
   });
   const [editGym, setEditGym] = useState<any>(null);
-  const [editForm, setEditForm] = useState({ name: '', email: '', phone: '', address: '' });
+  const [editForm, setEditForm] = useState({ name: '', email: '', phone: '', address: '', broadcasts_per_month: '1' });
   const [pendingDelete, setPendingDelete] = useState<any>(null);
   const [pendingToggle, setPendingToggle] = useState<any>(null);
 
@@ -181,6 +181,7 @@ export default function GymsScreen() {
           whatsapp_number: form.whatsapp_number || null,
           instagram_handle: form.instagram_handle || null,
           capacity: form.capacity ? parseInt(form.capacity) : 50,
+          broadcasts_per_month: parseInt(pricing.broadcastsPerMonth) || 1,
         })
         .select()
         .single();
@@ -316,7 +317,7 @@ export default function GymsScreen() {
   const handleEdit = () => {
     if (!editGym) return;
     updateGym.mutate(
-      { id: editGym.id, name: editForm.name, email: editForm.email, phone: editForm.phone, address: editForm.address },
+      { id: editGym.id, name: editForm.name, email: editForm.email, phone: editForm.phone, address: editForm.address, broadcasts_per_month: parseInt(editForm.broadcasts_per_month) || 1 },
       {
         onSuccess: () => {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -397,7 +398,7 @@ export default function GymsScreen() {
           renderItem={({ item }: { item: any }) => (
             <GymCard
               gym={item}
-              onEdit={() => { setEditGym(item); setEditForm({ name: item.name, email: item.email || '', phone: item.phone || '', address: item.address || '' }); }}
+              onEdit={() => { setEditGym(item); setEditForm({ name: item.name, email: item.email || '', phone: item.phone || '', address: item.address || '', broadcasts_per_month: String(item.broadcasts_per_month || 1) }); }}
               onDelete={() => setPendingDelete(item)}
               onToggle={() => setPendingToggle(item)}
             />
@@ -593,6 +594,19 @@ export default function GymsScreen() {
                 />
               </View>
             ))}
+            <View style={styles.fieldGroup}>
+              <Text style={styles.fieldLabel}>Broadcasts/Month Limit</Text>
+              <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted, marginBottom: 4 }}>
+                Number of WhatsApp broadcasts this gym can send per billing cycle
+              </Text>
+              <TextInput
+                style={styles.input}
+                value={editForm.broadcasts_per_month}
+                onChangeText={v => setEditForm(p => ({ ...p, broadcasts_per_month: v }))}
+                placeholderTextColor={Colors.textMuted}
+                keyboardType="numeric"
+              />
+            </View>
             <Pressable
               style={[styles.submitBtn, updateGym.isPending && { opacity: 0.6 }]}
               onPress={handleEdit}

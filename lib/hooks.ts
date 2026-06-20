@@ -18,6 +18,21 @@ export function useGyms() {
   });
 }
 
+// Single-gym fetch — used by gym-owner screens that only need their own
+// gym's record (e.g. to read broadcasts_per_month), avoiding the need to
+// pull every gym in the system the way useGyms() does for Super Admin.
+export function useGym(gymId?: string | null) {
+  return useQuery({
+    queryKey: ['gym', gymId],
+    enabled: !!gymId,
+    queryFn: async () => {
+      const { data, error } = await supabase.from('gyms').select('*').eq('id', gymId!).single();
+      if (error) throw error;
+      return data;
+    },
+  });
+}
+
 export function useUpdateGym() {
   const qc = useQueryClient();
   return useMutation({
@@ -1016,6 +1031,28 @@ export function useMemberWeightHistory(memberId?: string | null) {
 // Uses the same Railway automation pattern: inserts a "pending" row into
 // whatsapp_logs → Railway server picks it up and sends via Meta API
 // using the gym's stored credentials. No direct Meta API call from app.
+// ── Broadcast usage tracking (monthly limit enforcement) ──────────────
+// Counts how many broadcasts a gym has sent in the current calendar month.
+export function useGymBroadcastUsage(gymId?: string | null) {
+  return useQuery({
+    queryKey: ['gym_broadcast_usage', gymId],
+    enabled: !!gymId,
+    queryFn: async () => {
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      const { count, error } = await supabase
+        .from('whatsapp_logs')
+        .select('id', { count: 'exact', head: true })
+        .eq('gym_id', gymId!)
+        .is('phone', null) // null phone = broadcast log entry (not a 1:1 message)
+        .gte('created_at', monthStart);
+      if (error) throw error;
+      return count ?? 0;
+    },
+    refetchInterval: 10000,
+  });
+}
+
 export function useBroadcastWhatsApp() {
   const qc = useQueryClient();
   return useMutation({
@@ -1024,12 +1061,26 @@ export function useBroadcastWhatsApp() {
       sender_name,
       message,
       recipient_type,
+      broadcasts_per_month,
+      broadcasts_used,
     }: {
       gym_id: string;
       sender_name: string;
       message: string;
       recipient_type: 'trainers' | 'clients' | 'both';
+      broadcasts_per_month?: number;
+      broadcasts_used?: number;
     }) => {
+      // Enforce monthly broadcast limit before doing anything else
+      const limit = broadcasts_per_month ?? 1;
+      const used = broadcasts_used ?? 0;
+      if (used >= limit) {
+        const err: any = new Error('LIMIT_REACHED');
+        err.isLimitReached = true;
+        err.limit = limit;
+        throw err;
+      }
+
       // Get name + phone pairs to broadcast to — each recipient must get
       // their OWN name in the template, not a single shared sender_name.
       const recipients: { name: string; phone: string }[] = [];
@@ -1073,7 +1124,9 @@ export function useBroadcastWhatsApp() {
         throw new Error(d.error || 'Broadcast failed');
       }
 
-      // Log in whatsapp_logs
+      const serverResult = await res.json(); // { success, sent, failed, total }
+
+      // Log in whatsapp_logs — this row is what counts toward the monthly limit
       const { data, error } = await supabase
         .from('whatsapp_logs')
         .insert({
@@ -1084,10 +1137,11 @@ export function useBroadcastWhatsApp() {
         .single();
 
       if (error) throw error;
-      return data;
+      return { ...data, sent: serverResult.sent, failed: serverResult.failed, total: serverResult.total };
     },
-    onSuccess: () => {
+    onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: ['whatsapp_logs'] });
+      qc.invalidateQueries({ queryKey: ['gym_broadcast_usage', vars.gym_id] });
     },
   });
 }
