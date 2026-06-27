@@ -10,6 +10,7 @@ import {
   useTrainers, useMembers, useInsertActivity,
   useEnabledModules, useInsertTrainer, useTrainerStats,
 } from '@/lib/hooks';
+import { useQueryClient } from '@tanstack/react-query';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { ChatModal } from '@/components/ChatModal';
