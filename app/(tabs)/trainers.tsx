@@ -17,7 +17,23 @@ import { Colors } from '@/constants/colors';
 import { useTabBarHeight } from '@/lib/useTabBarHeight';
 import * as Haptics from 'expo-haptics';
 import { supabase } from '@/lib/supabase';
-import { useQueryClient } from '@tanstack/react-query';
+// Extracted outside the FlatList renderItem to comply with React hooks rules
+function TrainerKPIRow({ trainerId, clientCount }: { trainerId: string; clientCount: number }) {
+  const { data: stats } = useTrainerStats(trainerId);
+  if (!stats || clientCount === 0) return null;
+  return (
+    <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+      <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: Colors.warning + '15', borderRadius: 8, padding: 8 }}>
+        <Ionicons name="sunny-outline" size={13} color={Colors.warning} />
+        <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 12, color: Colors.warning }}>{stats.morning} Morning</Text>
+      </View>
+      <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: Colors.info + '15', borderRadius: 8, padding: 8 }}>
+        <Ionicons name="moon-outline" size={13} color={Colors.info} />
+        <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 12, color: Colors.info }}>{stats.evening} Evening</Text>
+      </View>
+    </View>
+  );
+}
 
 export default function TrainersScreen() {
   const { user } = useAuth();
@@ -163,22 +179,6 @@ export default function TrainersScreen() {
           renderItem={({ item }: { item: any }) => {
             const trainerId = item.profile_id || item.id;
             const clientCount = members.filter((m: any) => m.trainer_id === trainerId).length;
-            const TrainerKPI = () => {
-              const { data: stats } = useTrainerStats(trainerId);
-              if (!stats || clientCount === 0) return null;
-              return (
-                <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
-                  <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: Colors.warning + '15', borderRadius: 8, padding: 8 }}>
-                    <Ionicons name="sunny-outline" size={13} color={Colors.warning} />
-                    <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 12, color: Colors.warning }}>{stats.morning} Morning</Text>
-                  </View>
-                  <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: Colors.info + '15', borderRadius: 8, padding: 8 }}>
-                    <Ionicons name="moon-outline" size={13} color={Colors.info} />
-                    <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 12, color: Colors.info }}>{stats.evening} Evening</Text>
-                  </View>
-                </View>
-              );
-            };
             return (
               <View style={styles.card}>
                 <View style={styles.cardTop}>
@@ -200,7 +200,7 @@ export default function TrainersScreen() {
                     )}
                   </View>
                 </View>
-                <TrainerKPI />
+                <TrainerKPIRow trainerId={trainerId} clientCount={clientCount} />
                 <View style={styles.cardActions}>
                   <Pressable
                     style={styles.actionBtn}
