@@ -539,8 +539,8 @@ export function useUpsertDietPlan() {
 
       if (selectError) throw selectError;
 
+      let savedData;
       if (existing?.id) {
-        // Update
         const { data, error } = await supabase
           .from('diet_plans')
           .update({ items: plan.items })
@@ -548,17 +548,28 @@ export function useUpsertDietPlan() {
           .select()
           .single();
         if (error) throw error;
-        return data;
+        savedData = data;
       } else {
-        // Insert
         const { data, error } = await supabase
           .from('diet_plans')
           .insert(plan)
           .select()
           .single();
         if (error) throw error;
-        return data;
+        savedData = data;
       }
+
+      // Trigger diet notification + WhatsApp via gym server
+      if (plan.gym_id) {
+        const GYM_SERVER = process.env.EXPO_PUBLIC_GYM_SERVER_URL || 'https://zenvik-gym-server-production.up.railway.app';
+        fetch(`${GYM_SERVER}/diet/assigned`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_profile_id: plan.client_profile_id, gym_id: plan.gym_id }),
+        }).catch(e => console.warn('diet/assigned trigger failed:', e.message));
+      }
+
+      return savedData;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['diet_plans'] }),
     onError: (error: any) => {
@@ -591,6 +602,22 @@ export function useWeightHistory(profileId?: string | null) {
       if (error) throw error;
       return data ?? [];
     },
+  });
+}
+
+export function useInsertWeightHistory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ client_profile_id, weight_kg, notes }: { client_profile_id: string; weight_kg: number; notes?: string }) => {
+      const { data, error } = await supabase
+        .from('weight_history')
+        .insert({ client_profile_id, weight_kg, notes, recorded_at: new Date().toISOString() })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ['weight_history', vars.client_profile_id] }),
   });
 }
 
@@ -859,13 +886,14 @@ export function useNotifications(memberId?: string | null, gymId?: string | null
         .limit(100);
 
       if (memberId && gymId) {
-        // Member: see their own notifications OR gym-wide (no member_id)
-        q = q.or(`member_id.eq.${memberId},and(gym_id.eq.${gymId},member_id.is.null)`);
+        // Member: see only their own notifications — NOT gym-wide null rows
+        // (those are owner-only summary notifications like broadcast_sent)
+        q = q.eq('member_id', memberId).eq('gym_id', gymId);
       } else if (profileId && gymId) {
-        // Trainer: see notifications addressed to their profile OR gym-wide
-        q = q.or(`member_id.eq.${profileId},and(gym_id.eq.${gymId},member_id.is.null)`);
+        // Trainer: see only notifications addressed to their profile
+        q = q.eq('member_id', profileId).eq('gym_id', gymId);
       } else if (gymId) {
-        // Owner/Admin: see all gym notifications
+        // Owner/Admin: see all gym notifications (includes null member_id summaries)
         q = q.eq('gym_id', gymId);
       } else if (memberId) {
         q = q.eq('member_id', memberId);
@@ -874,7 +902,7 @@ export function useNotifications(memberId?: string | null, gymId?: string | null
       if (error) throw error;
       return data ?? [];
     },
-    refetchInterval: 10000, // refresh every 10 seconds for real-time feel
+    refetchInterval: 10000,
   });
 }
 
@@ -1164,7 +1192,7 @@ export function useBroadcastInApp() {
       const title = `📢 Message from ${sender_name}`;
       const notifRows: any[] = [];
 
-      // Members — addressed by their member id
+      // Members — addressed by their member id (they see it in their notifications)
       if (recipient_type === 'clients' || recipient_type === 'both') {
         const { data: members } = await supabase
           .from('members')
@@ -1177,7 +1205,6 @@ export function useBroadcastInApp() {
       }
 
       // Trainers — addressed by their profile id (auth uid)
-      // useNotifications for trainers queries by profileId so this matches
       if (recipient_type === 'trainers' || recipient_type === 'both') {
         const { data: trainers } = await supabase
           .from('profiles')
@@ -1189,16 +1216,24 @@ export function useBroadcastInApp() {
         });
       }
 
+      // Insert individual notifications for recipients
       if (notifRows.length > 0) {
         const { error } = await supabase.from('notifications').insert(notifRows);
         if (error) throw error;
-      } else {
-        // Fallback: gym-wide notification (visible to owner/admin)
-        const { error } = await supabase.from('notifications').insert({
-          gym_id, member_id: null, title, body: message, type: 'broadcast', is_read: false,
-        });
-        if (error) throw error;
       }
+
+      // Insert ONE single summary notification for the owner/admin only.
+      // We use type 'broadcast_sent' (not 'broadcast') so members don't
+      // accidentally see this if their query includes null member_id rows.
+      const { error: ownerError } = await supabase.from('notifications').insert({
+        gym_id,
+        member_id: null,
+        title: `📢 Broadcast Sent`,
+        body: `"${message.slice(0, 80)}${message.length > 80 ? '…' : ''}" — sent to ${notifRows.length} recipient${notifRows.length !== 1 ? 's' : ''}`,
+        type: 'broadcast_sent',
+        is_read: false,
+      });
+      if (ownerError) console.warn('Owner broadcast notification failed:', ownerError.message);
 
       return { delivered: notifRows.length };
     },
@@ -1277,6 +1312,31 @@ export function useGymStats(gymId?: string | null) {
         memberCount: memberCount ?? 0,
         membersWithTrainer: membersWithTrainer ?? 0,
       };
+    },
+  });
+}
+
+// Trainer-specific KPI: count morning vs evening clients assigned to this trainer
+export function useTrainerStats(trainerId?: string | null) {
+  return useQuery({
+    queryKey: ['trainer_stats', trainerId],
+    enabled: !!trainerId,
+    queryFn: async () => {
+      // Get all members assigned to this trainer
+      const { data: members } = await supabase
+        .from('members')
+        .select('id')
+        .eq('trainer_id', trainerId!);
+      if (!members?.length) return { total: 0, morning: 0, evening: 0 };
+      const memberIds = members.map((m: any) => m.id);
+      // Get their client profiles for session_time
+      const { data: profiles } = await supabase
+        .from('client_profiles')
+        .select('session_time')
+        .in('member_id', memberIds);
+      const morning = (profiles ?? []).filter((p: any) => p.session_time === 'morning').length;
+      const evening = (profiles ?? []).filter((p: any) => p.session_time !== 'morning').length;
+      return { total: members.length, morning, evening };
     },
   });
 }

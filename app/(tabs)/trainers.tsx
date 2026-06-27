@@ -1,14 +1,14 @@
 import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable,
-  ActivityIndicator, TextInput, Modal, FlatList,
+  ActivityIndicator, TextInput, Modal, FlatList, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/context/AuthContext';
 import {
   useTrainers, useMembers, useInsertActivity,
-  useEnabledModules, useInsertTrainer,
+  useEnabledModules, useInsertTrainer, useTrainerStats,
 } from '@/lib/hooks';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ConfirmModal } from '@/components/ConfirmModal';
@@ -161,7 +161,24 @@ export default function TrainersScreen() {
             </View>
           }
           renderItem={({ item }: { item: any }) => {
-            const clientCount = members.filter((m: any) => m.trainer_id === (item.profile_id || item.id)).length;
+            const trainerId = item.profile_id || item.id;
+            const clientCount = members.filter((m: any) => m.trainer_id === trainerId).length;
+            const TrainerKPI = () => {
+              const { data: stats } = useTrainerStats(trainerId);
+              if (!stats || clientCount === 0) return null;
+              return (
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+                  <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: Colors.warning + '15', borderRadius: 8, padding: 8 }}>
+                    <Ionicons name="sunny-outline" size={13} color={Colors.warning} />
+                    <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 12, color: Colors.warning }}>{stats.morning} Morning</Text>
+                  </View>
+                  <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: Colors.info + '15', borderRadius: 8, padding: 8 }}>
+                    <Ionicons name="moon-outline" size={13} color={Colors.info} />
+                    <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 12, color: Colors.info }}>{stats.evening} Evening</Text>
+                  </View>
+                </View>
+              );
+            };
             return (
               <View style={styles.card}>
                 <View style={styles.cardTop}>
@@ -183,6 +200,7 @@ export default function TrainersScreen() {
                     )}
                   </View>
                 </View>
+                <TrainerKPI />
                 <View style={styles.cardActions}>
                   <Pressable
                     style={styles.actionBtn}
@@ -213,6 +231,7 @@ export default function TrainersScreen() {
 
       {/* Add Trainer Modal */}
       <Modal visible={showAdd} animationType="slide" presentationStyle="formSheet" onRequestClose={() => setShowAdd(false)}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <View style={[styles.modal, { paddingTop: insets.top + 16 }]}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Add Trainer</Text>
@@ -220,7 +239,7 @@ export default function TrainersScreen() {
               <Ionicons name="close" size={24} color={Colors.text} />
             </Pressable>
           </View>
-          <ScrollView showsVerticalScrollIndicator={false}>
+          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
             {[
               { key: 'name', label: 'Full Name *', placeholder: 'Trainer Name', keyboard: 'default' },
               { key: 'phone', label: 'Phone *', placeholder: '+91 98765 43210', keyboard: 'phone-pad' },
@@ -300,10 +319,12 @@ export default function TrainersScreen() {
             </Pressable>
           </ScrollView>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Edit Modal */}
       <Modal visible={!!editingTrainer} animationType="slide" presentationStyle="formSheet" onRequestClose={() => setEditingTrainer(null)}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <View style={[styles.modal, { paddingTop: insets.top + 16 }]}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Edit Trainer</Text>
@@ -367,6 +388,7 @@ export default function TrainersScreen() {
             {saving ? <ActivityIndicator color="#000" /> : <Text style={styles.submitBtnText}>Save Changes</Text>}
           </Pressable>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       <ConfirmModal

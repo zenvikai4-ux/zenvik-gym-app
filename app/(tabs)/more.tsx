@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, KeyboardAvoidingView, Platform, Pressable, Switch,
-  ActivityIndicator, TextInput, Modal, Alert, Image,
+  ActivityIndicator, TextInput, Modal, Alert, Image, RefreshControl,
 } from 'react-native';
 
 import { Ionicons } from '@expo/vector-icons';
@@ -18,7 +18,7 @@ import {
   useWhatsappLogs, useInsertWhatsappLog,
   useWhatsappTemplates, useUpdateWhatsappTemplate,
   useGymSubscriptionByGym,
-  useBroadcastWhatsApp, useBroadcastInApp, useInsertQuery,
+  useBroadcastWhatsApp, useBroadcastInApp, useInsertQuery, useQueries, useUpdateQuery,
   useGym, useGymBroadcastUsage,
   useInsertModule, useUpdateModule, useDeleteModule,
   useAutoInvoice, useGymModulePrice, useGymStats, useInsertNotification, useLatestInvoice, useUpsertGymSubscription,
@@ -81,6 +81,7 @@ export default function MoreScreen() {
       { key: 'my_modules', label: 'My Modules', icon: 'grid-outline', color: Colors.purple },
       { key: 'gym_knowledge', label: 'Gym Knowledge Base', icon: 'book-outline', color: Colors.warning },
       { key: 'automation_config', label: 'Automation Settings', icon: 'flash-outline', color: '#E1306C' },
+      { key: 'gym_queries', label: 'Staff Queries', icon: 'chatbubbles-outline', color: Colors.primary },
     );
   }
 
@@ -202,6 +203,9 @@ export default function MoreScreen() {
       </Modal>
       <Modal visible={activeSection === 'automation_config'} animationType="slide" onRequestClose={() => setActiveSection(null)}>
         <AutomationConfigSection onClose={() => setActiveSection(null)} />
+      </Modal>
+      <Modal visible={activeSection === 'gym_queries'} animationType="slide" onRequestClose={() => setActiveSection(null)}>
+        <GymQueriesSection onClose={() => setActiveSection(null)} />
       </Modal>
 
       {/* Custom sign-out confirmation (replaces Alert.alert which is blocked in iframes on web) */}
@@ -2578,6 +2582,78 @@ const broadcastStyles = StyleSheet.create({
   },
   sendBtnText: { fontFamily: 'Inter_600SemiBold', fontSize: 15, color: '#000' },
 });
+
+// ── Gym Queries Section (gym owner views trainer/member queries) ─────────
+function GymQueriesSection({ onClose }: { onClose: () => void }) {
+  const { user } = useAuth();
+  const insets = useSafeAreaInsets();
+  const gymId = user?.gym_id;
+  const { data: queries = [], isLoading, refetch, isRefetching } = useQueries(gymId, false);
+  const updateQuery = useUpdateQuery();
+
+  const gymQueries = queries.filter((q: any) =>
+    q.gym_id === gymId && ['trainer', 'member'].includes(q.sender_role)
+  );
+
+  const handleMarkResolved = (id: string) => {
+    updateQuery.mutate({ id, status: 'resolved' }, {
+      onSuccess: () => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success),
+    });
+  };
+
+  return (
+    <View style={{ flex: 1, backgroundColor: Colors.background, paddingTop: insets.top }}>
+      <SectionHeader title="Staff Queries" onClose={onClose} />
+      {isLoading ? (
+        <ActivityIndicator style={{ marginTop: 40 }} color={Colors.primary} />
+      ) : gymQueries.length === 0 ? (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+          <Ionicons name="chatbubbles-outline" size={48} color={Colors.textMuted} />
+          <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 16, color: Colors.text }}>No queries yet</Text>
+          <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textMuted }}>Trainer and member queries will appear here</Text>
+        </View>
+      ) : (
+        <ScrollView
+          contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: insets.bottom + 20 }}
+          refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.primary} />}
+        >
+          {gymQueries.map((q: any) => (
+            <View key={q.id} style={[section.card, { gap: 8 }]}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                  <View style={{ backgroundColor: q.sender_role === 'trainer' ? Colors.warning + '20' : Colors.info + '20', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                    <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 11, color: q.sender_role === 'trainer' ? Colors.warning : Colors.info }}>
+                      {q.sender_role === 'trainer' ? '🏋️ Trainer' : '👤 Member'}
+                    </Text>
+                  </View>
+                  <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: Colors.text }}>{q.sender_name}</Text>
+                </View>
+                <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>
+                  {new Date(q.created_at).toLocaleDateString('en-IN')}
+                </Text>
+              </View>
+              <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary, lineHeight: 19 }}>{q.message}</Text>
+              {q.status !== 'resolved' ? (
+                <Pressable
+                  style={{ alignSelf: 'flex-start', backgroundColor: Colors.primaryMuted, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1, borderColor: Colors.primary + '40' }}
+                  onPress={() => handleMarkResolved(q.id)}
+                  disabled={updateQuery.isPending}
+                >
+                  <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 12, color: Colors.primary }}>Mark Resolved</Text>
+                </Pressable>
+              ) : (
+                <View style={{ flexDirection: 'row', gap: 4, alignItems: 'center' }}>
+                  <Ionicons name="checkmark-circle" size={14} color={Colors.primary} />
+                  <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 12, color: Colors.primary }}>Resolved</Text>
+                </View>
+              )}
+            </View>
+          ))}
+        </ScrollView>
+      )}
+    </View>
+  );
+}
 
 // ── Send Query Modal (all roles) ───────────────────────────────────────
 function SendQueryModal({ onClose }: { onClose: () => void }) {

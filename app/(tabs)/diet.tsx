@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable,
-  TextInput, ActivityIndicator, Alert,
+  TextInput, ActivityIndicator, Alert, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/context/AuthContext';
 import {
   useClientProfiles, useDietPlans, useUpsertDietPlan,
-  useDeleteDietPlan, useInsertClientProfile,
+  useDeleteDietPlan, useInsertClientProfile, useWeightHistory, useInsertWeightHistory,
 } from '@/lib/hooks';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Colors } from '@/constants/colors';
@@ -164,7 +164,7 @@ export default function DietScreen() {
           </Text>
         </View>
       ) : realProfileId ? (
-        <DietPlanSection profileId={realProfileId} tabBarHeight={tabBarHeight} />
+        <DietPlanSection profileId={realProfileId} gymId={user?.gym_id || ''} tabBarHeight={tabBarHeight} />
       ) : (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator color={Colors.primary} />
@@ -174,8 +174,10 @@ export default function DietScreen() {
   );
 }
 
-function DietPlanSection({ profileId, tabBarHeight }: { profileId: string; tabBarHeight: number }) {
+function DietPlanSection({ profileId, gymId, tabBarHeight }: { profileId: string; gymId: string; tabBarHeight: number }) {
   const { data: plans = [] } = useDietPlans(profileId);
+  const { data: weightHistory = [] } = useWeightHistory(profileId);
+  const insertWeight = useInsertWeightHistory();
   const [activeDay, setActiveDay] = useState(
     new Date().getDay() === 0 ? 6 : new Date().getDay() - 1
   );
@@ -183,6 +185,16 @@ function DietPlanSection({ profileId, tabBarHeight }: { profileId: string; tabBa
   const deletePlan = useDeleteDietPlan();
   const [editingSlot, setEditingSlot] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
+  const [copying, setCopying] = useState(false);
+  const [weightInput, setWeightInput] = useState('');
+  const [weightNotes, setWeightNotes] = useState('');
+  const [showAddWeight, setShowAddWeight] = useState(false);
+
+  const latestWeight = weightHistory.length > 0 ? weightHistory[weightHistory.length - 1] : null;
+  const firstWeight = weightHistory.length > 0 ? weightHistory[0] : null;
+  const weightChange = latestWeight && firstWeight && latestWeight.id !== firstWeight.id
+    ? (latestWeight.weight_kg - firstWeight.weight_kg).toFixed(1)
+    : null;
 
   const dayPlans = plans.filter((p: any) => p.day_of_week === activeDay);
   const getPlanForSlot = (slot: string) => dayPlans.find((p: any) => p.meal_slot === slot);
@@ -190,7 +202,7 @@ function DietPlanSection({ profileId, tabBarHeight }: { profileId: string; tabBa
   const handleSaveSlot = (slot: string) => {
     if (!editText.trim()) return;
     upsertPlan.mutate(
-      { client_profile_id: profileId, day_of_week: activeDay, meal_slot: slot, items: editText.trim() },
+      { client_profile_id: profileId, gym_id: gymId, day_of_week: activeDay, meal_slot: slot, items: editText.trim() },
       {
         onSuccess: () => {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -204,22 +216,118 @@ function DietPlanSection({ profileId, tabBarHeight }: { profileId: string; tabBa
     );
   };
 
+  const handleCopyFromPrevDay = async () => {
+    const prevDay = activeDay === 0 ? 6 : activeDay - 1;
+    const prevPlans = plans.filter((p: any) => p.day_of_week === prevDay);
+    if (!prevPlans.length) {
+      Alert.alert('Nothing to copy', `No meals found for ${DAY_NAMES[prevDay]}.`);
+      return;
+    }
+    setCopying(true);
+    try {
+      for (const p of prevPlans) {
+        await upsertPlan.mutateAsync({ client_profile_id: profileId, gym_id: gymId, day_of_week: activeDay, meal_slot: p.meal_slot, items: p.items });
+      }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: any) {
+      Alert.alert('Copy failed', e.message);
+    } finally {
+      setCopying(false);
+    }
+  };
+
   return (
-    <ScrollView
-      contentContainerStyle={[styles.dietContent, { paddingBottom: tabBarHeight + 20 }]}
-      showsVerticalScrollIndicator={false}
-    >
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.dayRow} contentContainerStyle={styles.dayContent}>
-        {DAY_NAMES.map((day, i) => (
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <ScrollView
+        contentContainerStyle={[styles.dietContent, { paddingBottom: tabBarHeight + 20 }]}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* Weight History Card */}
+        <View style={styles.mealCard}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Ionicons name="scale-outline" size={16} color={Colors.primary} />
+              <Text style={styles.mealTitle}>Weight Tracking</Text>
+            </View>
+            <Pressable
+              onPress={() => setShowAddWeight(v => !v)}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: Colors.primaryMuted, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }}
+            >
+              <Ionicons name={showAddWeight ? 'close-outline' : 'add-outline'} size={14} color={Colors.primary} />
+              <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 12, color: Colors.primary }}>{showAddWeight ? 'Cancel' : 'Add Weight'}</Text>
+            </Pressable>
+          </View>
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <View style={{ flex: 1, backgroundColor: Colors.secondary, borderRadius: 10, padding: 10, alignItems: 'center' }}>
+              <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>Current</Text>
+              <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 20, color: Colors.text }}>{latestWeight ? `${latestWeight.weight_kg}kg` : '—'}</Text>
+            </View>
+            <View style={{ flex: 1, backgroundColor: Colors.secondary, borderRadius: 10, padding: 10, alignItems: 'center' }}>
+              <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>Change</Text>
+              <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 20, color: weightChange === null ? Colors.textMuted : Number(weightChange) < 0 ? Colors.primary : Colors.danger }}>
+                {weightChange !== null ? `${Number(weightChange) > 0 ? '+' : ''}${weightChange}kg` : '—'}
+              </Text>
+            </View>
+            <View style={{ flex: 1, backgroundColor: Colors.secondary, borderRadius: 10, padding: 10, alignItems: 'center' }}>
+              <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>Entries</Text>
+              <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 20, color: Colors.text }}>{weightHistory.length}</Text>
+            </View>
+          </View>
+          {showAddWeight && (
+            <View style={{ gap: 8 }}>
+              <TextInput style={styles.mealInput} placeholder="Weight in kg (e.g. 72.5)" placeholderTextColor={Colors.textMuted} keyboardType="decimal-pad" value={weightInput} onChangeText={setWeightInput} />
+              <TextInput style={styles.mealInput} placeholder="Notes (optional)" placeholderTextColor={Colors.textMuted} value={weightNotes} onChangeText={setWeightNotes} />
+              <Pressable style={styles.mealSaveBtn} disabled={insertWeight.isPending}
+                onPress={() => {
+                  const kg = parseFloat(weightInput);
+                  if (!kg || isNaN(kg)) { Alert.alert('Invalid', 'Enter a valid weight'); return; }
+                  insertWeight.mutate({ client_profile_id: profileId, weight_kg: kg, notes: weightNotes.trim() || undefined }, {
+                    onSuccess: () => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); setWeightInput(''); setWeightNotes(''); setShowAddWeight(false); },
+                  });
+                }}>
+                {insertWeight.isPending ? <ActivityIndicator color="#000" size="small" /> : <Text style={styles.mealSaveBtnText}>Save Weight</Text>}
+              </Pressable>
+            </View>
+          )}
+          {weightHistory.length > 1 && (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <View style={{ flexDirection: 'row', gap: 6 }}>
+                {[...weightHistory].reverse().slice(0, 8).map((w: any) => (
+                  <View key={w.id} style={{ backgroundColor: Colors.card, borderRadius: 8, padding: 8, alignItems: 'center', borderWidth: 1, borderColor: Colors.border, minWidth: 58 }}>
+                    <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: Colors.text }}>{w.weight_kg}kg</Text>
+                    <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 10, color: Colors.textMuted }}>{new Date(w.recorded_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</Text>
+                  </View>
+                ))}
+              </View>
+            </ScrollView>
+          )}
+        </View>
+
+        {/* Day selector + copy from previous day */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.dayRow, { flex: 1 }]} contentContainerStyle={styles.dayContent}>
+            {DAY_NAMES.map((day, i) => (
+              <Pressable
+                key={day}
+                style={[styles.dayBtn, activeDay === i && styles.dayBtnActive]}
+                onPress={() => { setActiveDay(i); Haptics.selectionAsync(); }}
+              >
+                <Text style={[styles.dayBtnText, activeDay === i && styles.dayBtnTextActive]}>{day}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
           <Pressable
-            key={day}
-            style={[styles.dayBtn, activeDay === i && styles.dayBtnActive]}
-            onPress={() => { setActiveDay(i); Haptics.selectionAsync(); }}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.border, marginRight: 4 }}
+            onPress={handleCopyFromPrevDay}
+            disabled={copying}
           >
-            <Text style={[styles.dayBtnText, activeDay === i && styles.dayBtnTextActive]}>{day}</Text>
+            {copying
+              ? <ActivityIndicator size="small" color={Colors.primary} />
+              : <Ionicons name="copy-outline" size={14} color={Colors.primary} />}
+            <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.primary }}>Copy prev</Text>
           </Pressable>
-        ))}
-      </ScrollView>
+        </View>
 
       {MEAL_SLOTS.map(slot => {
         const plan = getPlanForSlot(slot.key);
@@ -278,7 +386,8 @@ function DietPlanSection({ profileId, tabBarHeight }: { profileId: string; tabBa
           </View>
         );
       })}
-    </ScrollView>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
