@@ -8,7 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/context/AuthContext';
 import {
-  useClientProfiles, useWeightHistory, useUpdateClientProfile, useBroadcast,
+  useClientProfiles, useWeightHistory, useUpdateClientProfile, useBroadcastMyClients,
 } from '@/lib/hooks';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Colors } from '@/constants/colors';
@@ -29,7 +29,7 @@ export default function ClientsScreen() {
   const [selected, setSelected] = useState<any>(null);
   const [showBroadcast, setShowBroadcast] = useState(false);
   const [broadcastMsg, setBroadcastMsg] = useState('');
-  const broadcast = useBroadcast();
+  const broadcast = useBroadcastMyClients();
 
   const filtered = useMemo(() => {
     return profiles.filter((p: any) => {
@@ -48,17 +48,19 @@ export default function ClientsScreen() {
     broadcast.mutate(
       {
         gym_id: user.gym_id,
-        sender_name: user.name,
-        message: broadcastMsg.trim(),
-        recipient_type: 'my_clients',
         trainer_id: user.id,
+        message: broadcastMsg.trim(),
       },
       {
-        onSuccess: () => {
+        onSuccess: (data: any) => {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           setBroadcastMsg('');
           setShowBroadcast(false);
-          Alert.alert('Sent', 'Message broadcast to your clients.');
+          const failedNote = data?.failed ? ` (${data.failed} failed to deliver)` : '';
+          Alert.alert('Sent', `Message broadcast to ${data?.sent ?? 0} client${data?.sent === 1 ? '' : 's'}${failedNote}.`);
+        },
+        onError: (e: any) => {
+          Alert.alert('Failed to send', e?.message || 'Please try again.');
         },
       }
     );

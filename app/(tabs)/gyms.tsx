@@ -243,8 +243,17 @@ export default function GymsScreen() {
         await supabase.auth.setSession({ access_token: adminAccessToken, refresh_token: adminRefreshToken });
       }
 
-      // Step 4b: Auto-confirm the new user's email so they can login immediately
-      await supabase.rpc('confirm_user_email' as any, { user_email: form.email });
+      // Step 4b: Auto-confirm the new user's email so they can login immediately.
+      // Guarded — the gym, auth user, and profile have already been created
+      // by this point, so a failure here should not roll back/error out the
+      // whole flow. If this RPC is missing or fails, the owner can still
+      // confirm via the email Supabase sends (or admin can run the SQL
+      // migration that defines confirm_user_email).
+      try {
+        await supabase.rpc('confirm_user_email' as any, { user_email: form.email });
+      } catch (confirmErr: any) {
+        console.warn('confirm_user_email failed (owner may need to confirm email manually):', confirmErr?.message);
+      }
 
       // Step 5: Create owner profile using the admin session
       if (newUserId) {

@@ -797,15 +797,21 @@ export function useUpsertGymModule() {
 }
 
 // ── WHATSAPP LOGS ──────────────────────────────────────────────────────
-export function useWhatsappLogs() {
+// gymId: pass the owner's own gym id to scope results to that gym only.
+// Omit (pass null/undefined) only for the Super Admin global log view —
+// any other caller MUST pass gymId or this will leak other gyms' WhatsApp
+// message content and phone numbers to the client.
+export function useWhatsappLogs(gymId?: string | null) {
   return useQuery({
-    queryKey: ['whatsapp_logs'],
+    queryKey: ['whatsapp_logs', gymId],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let q = supabase
         .from('whatsapp_logs')
         .select('*, gym:gyms(id, name)')
         .order('created_at', { ascending: false })
         .limit(100);
+      if (gymId) q = q.eq('gym_id', gymId);
+      const { data, error } = await q;
       if (error) throw error;
       return data ?? [];
     },
@@ -921,10 +927,32 @@ export function useInsertNotification() {
 export function useMarkNotificationsRead() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ gymId, memberId }: { gymId?: string | null; memberId?: string | null }) => {
+    mutationFn: async ({
+      gymId,
+      memberId,
+      profileId,
+    }: {
+      gymId?: string | null;
+      memberId?: string | null;
+      profileId?: string | null;
+    }) => {
       let query = supabase.from('notifications').update({ is_read: true }).eq('is_read', false);
-      if (gymId) query = (query as any).eq('gym_id', gymId);
-      if (memberId) query = (query as any).eq('member_id', memberId);
+      if (!gymId) throw new Error('gymId is required to mark notifications as read');
+      query = (query as any).eq('gym_id', gymId);
+
+      if (memberId) {
+        // Member: only their own notifications.
+        query = (query as any).eq('member_id', memberId);
+      } else if (profileId) {
+        // Trainer: only notifications addressed to their profile.
+        query = (query as any).eq('member_id', profileId);
+      } else {
+        // Owner/Admin: only their own gym-wide summary notifications
+        // (member_id IS NULL) — never touch individual members' or
+        // trainers' unread notifications.
+        query = (query as any).is('member_id', null);
+      }
+
       const { error } = await query;
       if (error) throw error;
     },
@@ -1243,40 +1271,64 @@ export function useBroadcastInApp() {
   });
 }
 
-// ── BROADCAST (trainer sending to their own clients via WhatsApp) ──────
-// Kept for backwards compatibility with clients.tsx
-export function useBroadcast() {
+// ── BROADCAST (trainer sending to their own assigned clients only) ─────
+// Sends directly via the gym server's /broadcast endpoint with each
+// recipient's own name filled into the gym_broadcast template — same
+// personalization guarantee as useBroadcastWhatsApp(). Scoped strictly to
+// members assigned to this trainer (trainer_id), never the whole gym.
+export function useBroadcastMyClients() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({
       gym_id,
-      sender_name,
-      message,
-      recipient_type,
       trainer_id,
+      message,
     }: {
       gym_id: string;
-      sender_name: string;
+      trainer_id: string;
       message: string;
-      recipient_type: string;
-      trainer_id?: string;
     }) => {
-      // Insert pending log — Railway picks it up and sends via WhatsApp template
-      const { data, error } = await supabase
-        .from('whatsapp_logs')
-        .insert({
-          gym_id,
-          message,
-          status: 'pending',
-          recipient_type: 'clients',
-          sender_name,
-          phone: null,
-          trainer_id: trainer_id || null,
-        })
-        .select()
-        .single();
-      if (error) throw error;
-      return data;
+      const { data: members, error: membersError } = await supabase
+        .from('members')
+        .select('name, phone')
+        .eq('gym_id', gym_id)
+        .eq('trainer_id', trainer_id)
+        .eq('status', 'active')
+        .not('phone', 'is', null);
+      if (membersError) throw membersError;
+
+      const recipients = (members || [])
+        .filter((m: any) => !!m.phone)
+        .map((m: any) => ({ name: m.name || 'Member', phone: m.phone }));
+
+      if (recipients.length === 0) throw new Error('No clients with phone numbers assigned to you yet.');
+
+      const GYM_SERVER = process.env.EXPO_PUBLIC_GYM_SERVER_URL || 'https://zenvik-gym-server-production.up.railway.app';
+      const res = await fetch(`${GYM_SERVER}/broadcast`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gym_id, message, recipients }),
+      });
+
+      if (!res.ok) {
+        const d = await res.json();
+        throw new Error(d.error || 'Broadcast failed');
+      }
+
+      const serverResult = await res.json(); // { success, sent, failed, total }
+
+      // Log it the same way owner broadcasts are logged (phone: null marks
+      // this as a broadcast-type entry). This intentionally also counts
+      // toward the gym's shared monthly broadcast usage counter — the
+      // limit is per WhatsApp number/gym, not per sender, since it exists
+      // to protect the gym's Meta messaging quota regardless of who
+      // triggered the send.
+      await supabase.from('whatsapp_logs').insert({
+        gym_id, message, status: 'sent',
+        recipient_type: 'clients', sender_name: null, phone: null, trainer_id,
+      });
+
+      return serverResult;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['whatsapp_logs'] });
@@ -1327,7 +1379,7 @@ export function useTrainerStats(trainerId?: string | null) {
         .from('members')
         .select('id')
         .eq('trainer_id', trainerId!);
-      if (!members?.length) return { total: 0, morning: 0, evening: 0 };
+      if (!members?.length) return { total: 0, morning: 0, evening: 0, both: 0 };
       const memberIds = members.map((m: any) => m.id);
       // Get their client profiles for session_time
       const { data: profiles } = await supabase
@@ -1335,8 +1387,9 @@ export function useTrainerStats(trainerId?: string | null) {
         .select('session_time')
         .in('member_id', memberIds);
       const morning = (profiles ?? []).filter((p: any) => p.session_time === 'morning').length;
-      const evening = (profiles ?? []).filter((p: any) => p.session_time !== 'morning').length;
-      return { total: members.length, morning, evening };
+      const evening = (profiles ?? []).filter((p: any) => p.session_time === 'evening').length;
+      const both = (profiles ?? []).filter((p: any) => p.session_time === 'both').length;
+      return { total: members.length, morning, evening, both };
     },
   });
 }
@@ -1448,7 +1501,86 @@ export function useEnabledModules(gymId?: string | null) {
   });
 }
 
-// ── INSERT TRAINER WITH SIGNUP ─────────────────────────────────────────
+// ── SET CREDENTIALS FOR AN ALREADY-IMPORTED MEMBER ─────────────────────
+// Used by the bulk-import "Set Login Credentials" modal. Unlike
+// useInsertMemberWithLogin, the member row already exists (created during
+// bulk import) — this only creates/links the auth user + profile.
+export function useSetMemberCredentials() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (params: {
+      member_id: string;
+      gym_id: string;
+      name: string;
+      email: string;
+      password: string;
+    }) => {
+      const { data: { session: adminSession } } = await supabase.auth.getSession();
+      const adminAccess = adminSession?.access_token;
+      const adminRefresh = adminSession?.refresh_token;
+
+      setSuppressAuthEvents(true);
+      try {
+        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+          email: params.email,
+          password: params.password,
+          options: { data: { name: params.name } },
+        });
+
+        if (signUpError && !signUpError.message.toLowerCase().includes('already')) {
+          throw signUpError;
+        }
+
+        let userId = signUpData?.user?.id;
+
+        // If the email already had an account, find its user id via profiles
+        // (we can't look up auth.users directly from the client).
+        if (!userId) {
+          const { data: existingProfile } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('email', params.email)
+            .maybeSingle();
+          userId = existingProfile?.id;
+        }
+
+        try {
+          await supabase.rpc('confirm_user_email' as any, { user_email: params.email });
+        } catch {
+          // non-fatal — login will still work once Supabase confirms via email if this fails
+        }
+
+        if (userId) {
+          const { error: profileError } = await supabase.from('profiles').upsert({
+            id: userId,
+            name: params.name,
+            email: params.email,
+            role: 'member',
+            gym_id: params.gym_id,
+            member_id: params.member_id,
+          });
+          if (profileError) throw profileError;
+        } else {
+          throw new Error('Could not create or find a login for this email');
+        }
+
+        if (adminAccess && adminRefresh) {
+          await supabase.auth.setSession({ access_token: adminAccess, refresh_token: adminRefresh });
+        }
+
+        return { userId };
+      } finally {
+        setSuppressAuthEvents(false);
+      }
+    },
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ['members', vars.gym_id] });
+      qc.invalidateQueries({ queryKey: ['profiles'] });
+    },
+  });
+}
+
+
 export function useInsertTrainer() {
   const qc = useQueryClient();
   return useMutation({
@@ -1761,7 +1893,7 @@ export function useBulkImportMembers() {
       trainerList: any[];
     }) => {
       const PLAN_DAYS: Record<string, number> = { Monthly: 30, Quarterly: 90, 'Half-yearly': 180, Yearly: 365 };
-      const results = { success: 0, failed: 0, errors: [] as string[] };
+      const results = { success: 0, failed: 0, errors: [] as string[], insertedMembers: [] as Array<{ id: string; name: string; phone: string }> };
 
       for (const row of params.rows) {
         try {
@@ -1786,21 +1918,26 @@ export function useBulkImportMembers() {
             d.setDate(d.getDate() + (PLAN_DAYS[plan] || 30));
             expiry_date = d.toISOString().split('T')[0];
           }
-          const { error } = await supabase.from('members').insert({
-            name: row.name.trim(),
-            phone: row.phone.trim(),
-            plan,
-            joining_date,
-            expiry_date,
-            trainer_id,
-            gym_id: params.gym_id,
-            status: 'active',
-          });
+          const { data: inserted, error } = await supabase
+            .from('members')
+            .insert({
+              name: row.name.trim(),
+              phone: row.phone.trim(),
+              plan,
+              joining_date,
+              expiry_date,
+              trainer_id,
+              gym_id: params.gym_id,
+              status: 'active',
+            })
+            .select('id, name, phone')
+            .single();
           if (error) {
             results.failed++;
             results.errors.push(`${row.name}: ${error.message}`);
           } else {
             results.success++;
+            if (inserted) results.insertedMembers.push(inserted);
           }
         } catch (e: any) {
           results.failed++;
@@ -1820,7 +1957,7 @@ export function useBulkImportTrainers() {
       gym_id: string;
       rows: Array<{ name: string; phone: string; email?: string; specialization?: string }>;
     }) => {
-      const results = { success: 0, failed: 0, errors: [] as string[] };
+      const results = { success: 0, failed: 0, errors: [] as string[], insertedTrainers: [] as Array<{ id: string; name: string; email: string }> };
       for (const row of params.rows) {
         try {
           if (!row.name || !row.phone) {
@@ -1843,7 +1980,10 @@ export function useBulkImportTrainers() {
               role: 'trainer', gym_id: params.gym_id,
             });
             if (error) { results.failed++; results.errors.push(`${row.name}: ${error.message}`); }
-            else results.success++;
+            else {
+              results.success++;
+              results.insertedTrainers.push({ id: userId, name: row.name.trim(), email: systemEmail });
+            }
           }
         } catch (e: any) {
           results.failed++;
@@ -1853,6 +1993,55 @@ export function useBulkImportTrainers() {
       return results;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['trainers'] }),
+  });
+}
+
+// ── UPDATE CREDENTIALS FOR AN ALREADY-IMPORTED TRAINER ──────────────────
+// Bulk trainer import already creates a real auth user per row (with a
+// system-generated placeholder email/password, e.g. trainer_173...@gymapp.local
+// with a random password). This hook lets the admin replace that
+// placeholder with the trainer's real email + a real password they can
+// remember, on the SAME auth user (it does not create a second account).
+export function useUpdateTrainerCredentials() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (params: {
+      profile_id: string;
+      old_email: string;
+      new_email: string;
+      new_password: string;
+    }) => {
+      // 1. Set the new password while the account is still under old_email.
+      const { data: pwResult, error: pwError } = await supabase
+        .rpc('set_user_password' as any, { user_email: params.old_email, new_password: params.new_password });
+      if (pwError) throw pwError;
+      if (pwResult && (pwResult as any).success === false) {
+        throw new Error((pwResult as any).error || 'Failed to set password');
+      }
+
+      // 2. Rename the auth account to the trainer's real email, if it changed.
+      if (params.new_email && params.new_email !== params.old_email) {
+        const { data: emailResult, error: emailError } = await supabase
+          .rpc('update_user_email' as any, { old_email: params.old_email, new_email: params.new_email });
+        if (emailError) throw emailError;
+        if (emailResult && (emailResult as any).success === false) {
+          throw new Error((emailResult as any).error || 'Failed to update email');
+        }
+      }
+
+      // 3. Keep the profile row in sync with the new email.
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({ email: params.new_email })
+        .eq('id', params.profile_id);
+      if (profileError) throw profileError;
+
+      return { success: true };
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['trainers'] });
+      qc.invalidateQueries({ queryKey: ['profiles'] });
+    },
   });
 }
 

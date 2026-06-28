@@ -15,7 +15,6 @@ import {
   useInvoices, useInsertInvoice, useUpdateInvoice,
   useGymSubscriptions, useInsertGymSubscription, useUpdateGymSubscription, useDeleteGymSubscription,
   useModules, useGymModules, useUpsertGymModule,
-  useWhatsappLogs, useInsertWhatsappLog,
   useWhatsappTemplates, useUpdateWhatsappTemplate,
   useGymSubscriptionByGym,
   useBroadcastWhatsApp, useBroadcastInApp, useInsertQuery, useQueries, useUpdateQuery,
@@ -174,9 +173,7 @@ export default function MoreScreen() {
         <ModulesSection onClose={() => setActiveSection(null)} />
       </Modal>
       <Modal visible={activeSection === 'whatsapp'} animationType="slide" onRequestClose={() => setActiveSection(null)}>
-        {isAdmin
-          ? <WhatsAppAdminSection onClose={() => setActiveSection(null)} />
-          : <WhatsAppOwnerSection onClose={() => setActiveSection(null)} />}
+        <WhatsAppAdminSection onClose={() => setActiveSection(null)} />
       </Modal>
       <Modal visible={activeSection === 'billing'} animationType="slide" onRequestClose={() => setActiveSection(null)}>
         <BillingSection onClose={() => setActiveSection(null)} />
@@ -301,7 +298,11 @@ function BranchesSection({ onClose }: { onClose: () => void }) {
           role: 'gym_owner',
           gym_id: branchGym.id,
         });
-        await supabase.rpc('confirm_user_email' as any, { user_email: form.email }).catch(() => {});
+        try {
+          await supabase.rpc('confirm_user_email' as any, { user_email: form.email });
+        } catch {
+          // non-fatal
+        }
       }
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -416,15 +417,21 @@ function AnalyticsSection({ onClose }: { onClose: () => void }) {
   const { data: trainers = [] } = useTrainers(user?.gym_id);
 
   const activeMembers = members.filter((m: any) => m.status === 'active').length;
-  const convCount = leads.filter((l: any) => l.status === 'member').length;
+  // Pipeline stages: new, ai_chatting, interested, handoff, visit_scheduled,
+  // visited, converted, lost. (Older builds used enquiry/trial_booked/
+  // member/churned — those values no longer exist in the live schema.)
+  const convCount = leads.filter((l: any) => l.status === 'converted').length;
   const convRate = leads.length ? Math.round((convCount / leads.length) * 100) : 0;
 
   const funnelData = [
-    { stage: 'Enquiry', count: leads.filter((l: any) => l.status === 'enquiry').length, color: Colors.info },
-    { stage: 'Trial', count: leads.filter((l: any) => l.status === 'trial_booked').length, color: Colors.warning },
-    { stage: 'Visited', count: leads.filter((l: any) => l.status === 'visited').length, color: Colors.purple },
-    { stage: 'Member', count: leads.filter((l: any) => l.status === 'member').length, color: Colors.primary },
-    { stage: 'Churned', count: leads.filter((l: any) => l.status === 'churned').length, color: Colors.danger },
+    { stage: 'New', count: leads.filter((l: any) => l.status === 'new').length, color: Colors.info },
+    { stage: 'AI Chatting', count: leads.filter((l: any) => l.status === 'ai_chatting').length, color: Colors.purple },
+    { stage: 'Interested', count: leads.filter((l: any) => l.status === 'interested').length, color: Colors.warning },
+    { stage: 'Handoff', count: leads.filter((l: any) => l.status === 'handoff').length, color: '#E1306C' },
+    { stage: 'Visit Scheduled', count: leads.filter((l: any) => l.status === 'visit_scheduled').length, color: Colors.purple },
+    { stage: 'Visited', count: leads.filter((l: any) => l.status === 'visited').length, color: Colors.primary },
+    { stage: 'Converted', count: leads.filter((l: any) => l.status === 'converted').length, color: '#22C55E' },
+    { stage: 'Lost', count: leads.filter((l: any) => l.status === 'lost').length, color: Colors.danger },
   ];
 
   return (
@@ -1071,7 +1078,10 @@ function ModulesSection({ onClose }: { onClose: () => void }) {
       description: `Monthly — Modules ₹${gymPrice}${!broadcastConfig.clientPaysWhatsApp ? ` + WhatsApp ₹${calc.metaTotal}` : ' (Client pays WA)'} + Maintenance ₹${MGMT_FEE}`,
     }, {
       onSuccess: () => {
-        upsertSubscription.mutate({ gym_id: selectedGymId, plan: 'modules', amount: totalToCharge, start_date: today2, end_date: endDate2 });
+        upsertSubscription.mutate(
+          { gym_id: selectedGymId, plan: 'modules', amount: totalToCharge, start_date: today2, end_date: endDate2 },
+          { onError: (e: any) => console.warn('Subscription record update failed (invoice still created):', e.message) }
+        );
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         Alert.alert("Invoice Generated", `₹${totalToCharge.toLocaleString("en-IN")} invoice created for ${gym?.name}\nPeriod: ${today2} → ${endDate2}`);
       },
@@ -1371,7 +1381,10 @@ function GymInvoiceForm({ gym, onDone, autoInvoice, upsertSubscription }: any) {
       description: `Monthly — ${modules.map((gm: any) => gm.module?.name).join(', ')} + Maintenance ₹${MGMT}`,
     }, {
       onSuccess: () => {
-        upsertSubscription.mutate({ gym_id: gym.id, plan: 'modules', amount, start_date: today, end_date: endDate });
+        upsertSubscription.mutate(
+          { gym_id: gym.id, plan: 'modules', amount, start_date: today, end_date: endDate },
+          { onError: (e: any) => console.warn('Subscription record update failed (invoice still created):', e.message) }
+        );
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         Alert.alert('Invoice Created', `₹${amount.toLocaleString('en-IN')} invoice for ${gym.name}`);
         onDone();
@@ -1495,7 +1508,10 @@ function BillingSection({ onClose }: { onClose: () => void }) {
       },
       {
         onSuccess: () => {
-          upsertSubscription.mutate({ gym_id: gym.id, plan: 'modules', amount: total, start_date: today, end_date: endDate });
+          upsertSubscription.mutate(
+            { gym_id: gym.id, plan: 'modules', amount: total, start_date: today, end_date: endDate },
+            { onError: (e: any) => console.warn('Subscription record update failed (invoice still created):', e.message) }
+          );
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           Alert.alert('Invoice Created', `₹${total.toLocaleString('en-IN')} invoice for ${gym.name}\n\nModules: ₹${modulesTotal}\nMaintenance: ₹${MGMT}\n\nPeriod: ${today} → ${endDate}`);
           setGenerating(null);
@@ -1745,368 +1761,6 @@ function WhatsAppAdminSection({ onClose }: { onClose: () => void }) {
   );
 }
 
-function WhatsAppOwnerSection({ onClose }: { onClose: () => void }) {
-  const { user } = useAuth();
-  const insets = useSafeAreaInsets();
-  const gymId = user?.gym_id;
-  const { data: members = [] } = useMembers(gymId);
-  const { data: thisGym } = useGym(gymId); // owner only needs their own gym's record
-  const { data: templates = [], isLoading: loadingTemplates } = useWhatsappTemplates();
-  const { data: logs = [], isLoading: loadingLogs } = useWhatsappLogs();
-  const { data: broadcastsUsed = 0 } = useGymBroadcastUsage(gymId);
-  const updateTemplate = useUpdateWhatsappTemplate();
-  const broadcast = useBroadcastWhatsApp();
-  const insertQuery = useInsertQuery();
-
-  const broadcastsLimit = thisGym?.broadcasts_per_month ?? 1;
-  const limitReached = broadcastsUsed >= broadcastsLimit;
-
-  const [tab, setTab] = useState<'triggers' | 'broadcast' | 'log'>('triggers');
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editMsg, setEditMsg] = useState('');
-  const [editError, setEditError] = useState('');
-  const [broadcastMsg, setBroadcastMsg] = useState('');
-  const [recipientType, setRecipientType] = useState<'clients' | 'trainers' | 'both'>('clients');
-  const [broadcastError, setBroadcastError] = useState('');
-  const [broadcastSuccess, setBroadcastSuccess] = useState(false);
-  const [broadcastResult, setBroadcastResult] = useState<{ sent: number; failed: number; total: number } | null>(null);
-  const [cooldownSeconds, setCooldownSeconds] = useState(0);
-  const [querySent, setQuerySent] = useState(false);
-
-  // Cooldown timer — counts down once a broadcast finishes, blocking the
-  // Send button briefly so back-to-back broadcasts don't trip Meta's
-  // per-second rate limit.
-  useEffect(() => {
-    if (cooldownSeconds <= 0) return;
-    const t = setTimeout(() => setCooldownSeconds(s => Math.max(0, s - 1)), 1000);
-    return () => clearTimeout(t);
-  }, [cooldownSeconds]);
-
-  const handleRaiseQuery = () => {
-    if (!gymId) return;
-    insertQuery.mutate(
-      {
-        gym_id: gymId,
-        sender_name: user?.name || 'Gym Owner',
-        sender_role: 'gym_owner',
-        message: `Requesting an increase to my monthly broadcast limit (currently ${broadcastsLimit}/month, already used ${broadcastsUsed}).`,
-      },
-      {
-        onSuccess: () => {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          setQuerySent(true);
-        },
-      }
-    );
-  };
-
-  const gymLogs = logs.filter((l: any) => l.gym_id === gymId);
-
-  const handleToggle = (t: any) => {
-    updateTemplate.mutate({ id: t.id, is_enabled: !t.is_enabled }, {
-      onSuccess: () => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success),
-    });
-  };
-
-  const handleSaveEdit = () => {
-    setEditError('');
-    if (!editMsg.trim()) { setEditError('Message cannot be empty'); return; }
-    updateTemplate.mutate({ id: editingId!, message: editMsg.trim() }, {
-      onSuccess: () => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); setEditingId(null); },
-      onError: (e: any) => setEditError(e.message),
-    });
-  };
-
-  const handleBroadcast = () => {
-    setBroadcastError('');
-    setBroadcastSuccess(false);
-    setBroadcastResult(null);
-    if (!broadcastMsg.trim()) { setBroadcastError('Message is required'); return; }
-    if (!gymId) { setBroadcastError('Gym not found'); return; }
-    if (limitReached) { return; } // button is disabled in this case anyway
-    broadcast.mutate(
-      {
-        gym_id: gymId,
-        message: broadcastMsg.trim(),
-        sender_name: user?.gym_name || 'Gym',
-        recipient_type: recipientType,
-        broadcasts_per_month: broadcastsLimit,
-        broadcasts_used: broadcastsUsed,
-      },
-      {
-        onSuccess: (data: any) => {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          setBroadcastMsg('');
-          setBroadcastSuccess(true);
-          setBroadcastResult({ sent: data.sent ?? 0, failed: data.failed ?? 0, total: data.total ?? 0 });
-          // 15-second cooldown before another broadcast can be sent, to
-          // avoid tripping Meta's rate limit with back-to-back broadcasts.
-          setCooldownSeconds(15);
-        },
-        onError: (e: any) => {
-          if (e.isLimitReached) {
-            setBroadcastError('LIMIT_REACHED');
-          } else {
-            setBroadcastError(e.message);
-          }
-        },
-      }
-    );
-  };
-
-  return (
-    <View style={{ flex: 1, backgroundColor: Colors.background }}>
-      <SectionHeader title="WhatsApp" onClose={onClose} />
-
-      <View style={{ flexDirection: 'row', paddingHorizontal: 16, paddingTop: 12, gap: 6 }}>
-        {([
-          { key: 'triggers', label: 'Triggers' },
-          { key: 'broadcast', label: 'Broadcast' },
-          { key: 'log', label: 'Message Log' },
-        ] as const).map(t => (
-          <Pressable
-            key={t.key}
-            style={{ flex: 1, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1,
-              backgroundColor: tab === t.key ? '#25D36622' : Colors.secondary,
-              borderColor: tab === t.key ? '#25D366' : Colors.border }}
-            onPress={() => setTab(t.key)}
-          >
-            <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 12, color: tab === t.key ? '#25D366' : Colors.textSecondary }}>{t.label}</Text>
-          </Pressable>
-        ))}
-      </View>
-
-      {tab === 'triggers' && (
-        <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: insets.bottom + 20 }}>
-          <View style={[section.card, { backgroundColor: Colors.secondary, borderColor: Colors.border }]}>
-            <View style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-start' }}>
-              <Ionicons name="information-circle-outline" size={16} color={Colors.info} style={{ marginTop: 1 }} />
-              <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary, flex: 1, lineHeight: 18 }}>
-                These messages are sent <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>automatically</Text> via WhatsApp to members before their membership expires. Use variables like <Text style={{ fontFamily: 'Inter_600SemiBold', color: '#25D366' }}>{'{member_name}'}</Text> which are replaced with real data when sent.
-              </Text>
-            </View>
-          </View>
-
-          {loadingTemplates && <ActivityIndicator color="#25D366" />}
-
-          {templates.map((t: any) => {
-            const meta = getTriggerMeta(t.trigger_type ?? '');
-            const isEditing = editingId === t.id;
-            return (
-              <View key={t.id} style={section.card}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                  <View style={{ backgroundColor: meta.tagColor + '22', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: meta.tagColor + '55' }}>
-                    <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 11, color: meta.tagColor }}>{meta.tag}</Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={section.name}>{meta.label}</Text>
-                    <Text style={[section.sub, { fontSize: 11 }]}>{meta.desc}</Text>
-                  </View>
-                  {!isEditing && (
-                    <Pressable onPress={() => { setEditingId(t.id); setEditMsg(t.message ?? ''); setEditError(''); }}>
-                      <Ionicons name="pencil-outline" size={17} color={Colors.primary} style={{ marginRight: 8 }} />
-                    </Pressable>
-                  )}
-                  {updateTemplate.isPending && editingId === null ? (
-                    <ActivityIndicator size="small" color="#25D366" />
-                  ) : (
-                    <Pressable
-                      style={{ width: 46, height: 26, borderRadius: 13, backgroundColor: t.is_enabled ? '#25D366' : Colors.secondary, borderWidth: 1, borderColor: t.is_enabled ? '#25D366' : Colors.border, justifyContent: 'center', paddingHorizontal: 2 }}
-                      onPress={() => handleToggle(t)}
-                    >
-                      <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: t.is_enabled ? '#000' : Colors.textMuted, alignSelf: t.is_enabled ? 'flex-end' : 'flex-start' }} />
-                    </Pressable>
-                  )}
-                </View>
-
-                {isEditing ? (
-                  <View style={{ gap: 8 }}>
-                    <TextInput
-                      style={[section.input, { height: 90, textAlignVertical: 'top', paddingTop: 10 }]}
-                      value={editMsg}
-                      onChangeText={setEditMsg}
-                      multiline
-                      placeholder="Enter message template..."
-                      placeholderTextColor={Colors.textMuted}
-                    />
-                    <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>
-                      Variables: {'{member_name}'}, {'{gym_name}'}, {'{expiry_date}'}
-                    </Text>
-                    {!!editError && (
-                      <View style={section.errorBox}>
-                        <Ionicons name="alert-circle-outline" size={13} color={Colors.danger} />
-                        <Text style={section.errorText}>{editError}</Text>
-                      </View>
-                    )}
-                    <View style={{ flexDirection: 'row', gap: 8 }}>
-                      <Pressable style={[section.submitBtn, { flex: 1, backgroundColor: '#25D366' }]} onPress={handleSaveEdit} disabled={updateTemplate.isPending}>
-                        {updateTemplate.isPending ? <ActivityIndicator color="#fff" /> : <Text style={[section.submitBtnText, { color: '#fff' }]}>Save</Text>}
-                      </Pressable>
-                      <Pressable style={[section.cancelBtn, { flex: 1 }]} onPress={() => setEditingId(null)}>
-                        <Text style={section.cancelBtnText}>Cancel</Text>
-                      </Pressable>
-                    </View>
-                  </View>
-                ) : (
-                  <View style={{ backgroundColor: Colors.secondary, borderRadius: 8, padding: 10 }}>
-                    <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.text, lineHeight: 18 }}>{t.message || '(No message set)'}</Text>
-                  </View>
-                )}
-              </View>
-            );
-          })}
-
-          {templates.length === 0 && !loadingTemplates && (
-            <Text style={section.empty}>No triggers configured for this gym</Text>
-          )}
-        </ScrollView>
-      )}
-
-      {tab === 'broadcast' && (
-        <ScrollView contentContainerStyle={{ padding: 16, gap: 10, paddingBottom: insets.bottom + 20 }}>
-          <View style={[section.card, { gap: 10 }]}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={analytics.sectionTitle}>Send Broadcast Message</Text>
-              <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 12, color: limitReached ? Colors.danger : Colors.textMuted }}>
-                {broadcastsUsed}/{broadcastsLimit} used this month
-              </Text>
-            </View>
-
-            {limitReached ? (
-              <View style={{ backgroundColor: Colors.danger + '15', borderRadius: 10, padding: 14, borderWidth: 1, borderColor: Colors.danger + '40', gap: 10 }}>
-                <View style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-start' }}>
-                  <Ionicons name="alert-circle-outline" size={18} color={Colors.danger} />
-                  <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.danger, flex: 1, lineHeight: 19 }}>
-                    You've reached your monthly broadcast limit ({broadcastsLimit}/month). Contact admin to increase your limit, or raise a query below.
-                  </Text>
-                </View>
-                {querySent ? (
-                  <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
-                    <Ionicons name="checkmark-circle-outline" size={15} color={Colors.primary} />
-                    <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 12, color: Colors.primary }}>Query sent to admin</Text>
-                  </View>
-                ) : (
-                  <Pressable
-                    style={{ flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.danger, borderRadius: 8, height: 38 }}
-                    onPress={handleRaiseQuery}
-                    disabled={insertQuery.isPending}
-                  >
-                    {insertQuery.isPending
-                      ? <ActivityIndicator color="#fff" size="small" />
-                      : (
-                        <>
-                          <Ionicons name="chatbubble-ellipses-outline" size={15} color="#fff" />
-                          <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: '#fff' }}>Raise Query to Admin</Text>
-                        </>
-                      )}
-                  </Pressable>
-                )}
-              </View>
-            ) : (
-              <>
-                {/* Recipient selector */}
-                <View>
-                  <Text style={[section.fieldLabel, { marginBottom: 6 }]}>Send To</Text>
-                  <View style={{ flexDirection: 'row', gap: 8 }}>
-                    {([
-                      { value: 'clients', label: 'Members' },
-                      { value: 'trainers', label: 'Trainers' },
-                      { value: 'both', label: 'Both' },
-                    ] as const).map(opt => (
-                      <Pressable
-                        key={opt.value}
-                        style={{ flex: 1, height: 36, borderRadius: 8, alignItems: 'center', justifyContent: 'center', borderWidth: 1,
-                          backgroundColor: recipientType === opt.value ? Colors.primaryMuted : Colors.secondary,
-                          borderColor: recipientType === opt.value ? Colors.primary : Colors.border }}
-                        onPress={() => setRecipientType(opt.value)}
-                      >
-                        <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 12, color: recipientType === opt.value ? Colors.primary : Colors.textSecondary }}>{opt.label}</Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                </View>
-
-                <TextInput
-                  style={[section.input, { height: 100, textAlignVertical: 'top', paddingTop: 10 }]}
-                  placeholder="Type your message..."
-                  placeholderTextColor={Colors.textMuted}
-                  multiline
-                  value={broadcastMsg}
-                  onChangeText={setBroadcastMsg}
-                />
-                {!!broadcastError && broadcastError !== 'LIMIT_REACHED' && (
-                  <View style={section.errorBox}>
-                    <Ionicons name="alert-circle-outline" size={13} color={Colors.danger} />
-                    <Text style={section.errorText}>{broadcastError}</Text>
-                  </View>
-                )}
-                {broadcastSuccess && broadcastResult && (
-                  <View style={{ gap: 4, backgroundColor: Colors.primaryMuted, borderRadius: 10, padding: 10, borderWidth: 1, borderColor: Colors.primary + '40' }}>
-                    <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-                      <Ionicons name="checkmark-circle-outline" size={16} color={Colors.primary} />
-                      <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.primary }}>
-                        Broadcast sent — {broadcastResult.sent}/{broadcastResult.total} delivered
-                      </Text>
-                    </View>
-                    {broadcastResult.failed > 0 && (
-                      <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.warning, marginLeft: 24 }}>
-                        {broadcastResult.failed} message{broadcastResult.failed !== 1 ? 's' : ''} failed to deliver — recipient may need to message you first, or check WhatsApp setup.
-                      </Text>
-                    )}
-                  </View>
-                )}
-                <Pressable
-                  style={[section.submitBtn, { backgroundColor: '#25D366', opacity: broadcast.isPending || !broadcastMsg.trim() || cooldownSeconds > 0 ? 0.5 : 1 }]}
-                  onPress={handleBroadcast}
-                  disabled={broadcast.isPending || !broadcastMsg.trim() || cooldownSeconds > 0}
-                >
-                  {broadcast.isPending
-                    ? <ActivityIndicator color="#fff" />
-                    : cooldownSeconds > 0
-                      ? (
-                        <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-                          <Ionicons name="time-outline" size={16} color="#fff" />
-                          <Text style={[section.submitBtnText, { color: '#fff' }]}>Wait {cooldownSeconds}s before next broadcast</Text>
-                        </View>
-                      )
-                      : (
-                        <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-                          <Ionicons name="logo-whatsapp" size={16} color="#fff" />
-                          <Text style={[section.submitBtnText, { color: '#fff' }]}>Send Broadcast</Text>
-                        </View>
-                      )}
-                </Pressable>
-                <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted, textAlign: 'center' }}>
-                  {members.length} members in this gym
-                </Text>
-              </>
-            )}
-          </View>
-        </ScrollView>
-      )}
-
-      {tab === 'log' && (
-        <ScrollView contentContainerStyle={{ padding: 16, gap: 10, paddingBottom: insets.bottom + 20 }}>
-          {loadingLogs && <ActivityIndicator color="#25D366" />}
-          {gymLogs.map((log: any) => (
-            <View key={log.id} style={section.card}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                <Ionicons name="logo-whatsapp" size={16} color="#25D366" />
-                <Text style={[section.name, { flex: 1 }]}>
-                  {log.phone ? log.phone : 'Broadcast'}
-                </Text>
-                <StatusBadge status={log.status ?? 'pending'} map={WA_STATUS_MAP} />
-              </View>
-              <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary, lineHeight: 18 }} numberOfLines={3}>{log.message}</Text>
-              <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted, marginTop: 4 }}>{fmtDate(log.created_at)}</Text>
-            </View>
-          ))}
-          {gymLogs.length === 0 && !loadingLogs && <Text style={section.empty}>No messages sent yet</Text>}
-        </ScrollView>
-      )}
-    </View>
-  );
-}
 
 // ─── MY PLAN SECTION ──────────────────────────────────────────────────────────
 const ALL_PLANS = [
@@ -2268,33 +1922,84 @@ const BROADCAST_TEMPLATES = [
 function BroadcastWhatsAppModal({ onClose }: { onClose: () => void }) {
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
+  const gymId = user?.gym_id;
+  const { data: thisGym } = useGym(gymId);
+  const { data: broadcastsUsed = 0 } = useGymBroadcastUsage(gymId);
   const broadcast = useBroadcastWhatsApp();
+  const insertQuery = useInsertQuery();
+
+  const broadcastsLimit = thisGym?.broadcasts_per_month ?? 1;
+  const limitReached = broadcastsUsed >= broadcastsLimit;
+
   const [message, setMessage] = useState('');
   const [recipient, setRecipient] = useState<'clients' | 'trainers' | 'both'>('both');
   const [sent, setSent] = useState(false);
   const [sendError, setSendError] = useState('');
+  const [sendResult, setSendResult] = useState<{ sent: number; failed: number; total: number } | null>(null);
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
+  const [querySent, setQuerySent] = useState(false);
+
+  // 15-second cooldown between broadcasts so back-to-back sends don't trip
+  // Meta's per-second rate limit.
+  useEffect(() => {
+    if (cooldownSeconds <= 0) return;
+    const t = setTimeout(() => setCooldownSeconds(s => Math.max(0, s - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [cooldownSeconds]);
 
   const handleClose = () => {
     setMessage('');
     setRecipient('both');
     setSent(false);
     setSendError('');
+    setSendResult(null);
+    setQuerySent(false);
     broadcast.reset();
     onClose();
   };
 
-  const handleSend = () => {
-    if (!message.trim() || !user?.gym_id) return;
-    setSendError('');
-    broadcast.mutate(
-      { gym_id: user.gym_id, sender_name: user.name, message: message.trim(), recipient_type: recipient },
+  const handleRaiseQuery = () => {
+    if (!gymId) return;
+    insertQuery.mutate(
+      {
+        gym_id: gymId,
+        sender_name: user?.name || 'Gym Owner',
+        sender_role: 'gym_owner',
+        message: `Requesting an increase to my monthly broadcast limit (currently ${broadcastsLimit}/month, already used ${broadcastsUsed}).`,
+      },
       {
         onSuccess: () => {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          setQuerySent(true);
+        },
+      }
+    );
+  };
+
+  const handleSend = () => {
+    if (!message.trim() || !user?.gym_id) return;
+    if (limitReached) return; // button is disabled in this case anyway
+    setSendError('');
+    setSendResult(null);
+    broadcast.mutate(
+      {
+        gym_id: user.gym_id,
+        sender_name: user.name,
+        message: message.trim(),
+        recipient_type: recipient,
+        broadcasts_per_month: broadcastsLimit,
+        broadcasts_used: broadcastsUsed,
+      },
+      {
+        onSuccess: (data: any) => {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           setSent(true);
+          setSendResult({ sent: data.sent ?? 0, failed: data.failed ?? 0, total: data.total ?? 0 });
+          setCooldownSeconds(15);
         },
         onError: (e: any) => {
-          setSendError(e?.message || 'Failed to queue broadcast. Please try again.');
+          if (e.isLimitReached) setSendError('LIMIT_REACHED');
+          else setSendError(e?.message || 'Failed to send broadcast. Please try again.');
         },
       }
     );
@@ -2303,12 +2008,19 @@ function BroadcastWhatsAppModal({ onClose }: { onClose: () => void }) {
   if (sent) {
     return (
       <KeyboardAvoidingView style={broadcastStyles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <Pressable style={{ flex: 1 }} onPress={onClose} />
+        <Pressable style={{ flex: 1 }} onPress={handleClose} />
         <View style={[broadcastStyles.sheet, { paddingBottom: insets.bottom + 20, alignItems: 'center' }]}>
           <Ionicons name="checkmark-circle" size={54} color="#25D366" style={{ marginBottom: 12 }} />
-          <Text style={[broadcastStyles.title, { textAlign: 'center' }]}>WhatsApp Broadcast Queued!</Text>
+          <Text style={[broadcastStyles.title, { textAlign: 'center' }]}>
+            Broadcast Sent — {sendResult?.sent ?? 0}/{sendResult?.total ?? 0} delivered
+          </Text>
+          {!!sendResult?.failed && (
+            <Text style={{ color: Colors.warning, fontFamily: 'Inter_400Regular', fontSize: 12, textAlign: 'center', marginTop: 6 }}>
+              {sendResult.failed} message{sendResult.failed !== 1 ? 's' : ''} failed to deliver — recipient may need to message you first, or check WhatsApp setup.
+            </Text>
+          )}
           <Text style={{ color: Colors.textSecondary, fontFamily: 'Inter_400Regular', textAlign: 'center', marginTop: 8, marginBottom: 20 }}>
-            Your message has been queued. WhatsApp messages will be sent to all {recipient === 'both' ? 'members & trainers' : recipient === 'clients' ? 'members' : 'trainers'} shortly.
+            Sent to {recipient === 'both' ? 'members & trainers' : recipient === 'clients' ? 'members' : 'trainers'}.
           </Text>
           <Pressable style={[broadcastStyles.sendBtn, { backgroundColor: '#25D366' }]} onPress={handleClose}>
             <Text style={[broadcastStyles.sendBtnText, { color: '#fff' }]}>Done</Text>
@@ -2332,81 +2044,128 @@ function BroadcastWhatsAppModal({ onClose }: { onClose: () => void }) {
           </Pressable>
         </View>
 
-        <Text style={{ color: Colors.textSecondary, fontFamily: 'Inter_400Regular', fontSize: 13, marginBottom: 14 }}>
-          Sends a WhatsApp message to all selected members via your configured number.
-        </Text>
-
-        {/* Recipients */}
-        <Text style={broadcastStyles.label}>Send To</Text>
-        <View style={broadcastStyles.recipientRow}>
-          {(['clients', 'trainers', 'both'] as const).map(r => (
-            <Pressable
-              key={r}
-              style={[broadcastStyles.recipientBtn, recipient === r && broadcastStyles.recipientBtnActive]}
-              onPress={() => setRecipient(r)}
-            >
-              <Ionicons
-                name={r === 'clients' ? 'people-outline' : r === 'trainers' ? 'barbell-outline' : 'globe-outline'}
-                size={14}
-                color={recipient === r ? '#000' : Colors.textSecondary}
-              />
-              <Text style={[broadcastStyles.recipientText, recipient === r && broadcastStyles.recipientTextActive]}>
-                {r.charAt(0).toUpperCase() + r.slice(1)}
-              </Text>
-            </Pressable>
-          ))}
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <Text style={{ color: Colors.textSecondary, fontFamily: 'Inter_400Regular', fontSize: 13, flex: 1 }}>
+            Sends a WhatsApp message to all selected members via your configured number.
+          </Text>
+          <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 12, color: limitReached ? Colors.danger : Colors.textMuted, marginLeft: 8 }}>
+            {broadcastsUsed}/{broadcastsLimit} used
+          </Text>
         </View>
 
-        {/* Quick Templates */}
-        <Text style={broadcastStyles.label}>Quick Templates</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }}>
-          <View style={{ flexDirection: 'row', gap: 8, paddingRight: 8 }}>
-            {BROADCAST_TEMPLATES.map(t => (
-              <Pressable key={t.label} style={broadcastStyles.templateChip} onPress={() => setMessage(t.text)}>
-                <Text style={broadcastStyles.templateChipText}>{t.label}</Text>
+        {limitReached ? (
+          <View style={{ backgroundColor: Colors.danger + '15', borderRadius: 10, padding: 14, borderWidth: 1, borderColor: Colors.danger + '40', gap: 10 }}>
+            <View style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-start' }}>
+              <Ionicons name="alert-circle-outline" size={18} color={Colors.danger} />
+              <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.danger, flex: 1, lineHeight: 19 }}>
+                You've reached your monthly broadcast limit ({broadcastsLimit}/month). Contact admin to increase your limit, or raise a query below.
+              </Text>
+            </View>
+            {querySent ? (
+              <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+                <Ionicons name="checkmark-circle-outline" size={15} color={Colors.primary} />
+                <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 12, color: Colors.primary }}>Query sent to admin</Text>
+              </View>
+            ) : (
+              <Pressable
+                style={{ flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.danger, borderRadius: 8, height: 38 }}
+                onPress={handleRaiseQuery}
+                disabled={insertQuery.isPending}
+              >
+                {insertQuery.isPending
+                  ? <ActivityIndicator color="#fff" size="small" />
+                  : (
+                    <>
+                      <Ionicons name="chatbubble-ellipses-outline" size={15} color="#fff" />
+                      <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: '#fff' }}>Raise Query to Admin</Text>
+                    </>
+                  )}
               </Pressable>
-            ))}
+            )}
           </View>
-        </ScrollView>
+        ) : (
+          <>
+            {/* Recipients */}
+            <Text style={broadcastStyles.label}>Send To</Text>
+            <View style={broadcastStyles.recipientRow}>
+              {(['clients', 'trainers', 'both'] as const).map(r => (
+                <Pressable
+                  key={r}
+                  style={[broadcastStyles.recipientBtn, recipient === r && broadcastStyles.recipientBtnActive]}
+                  onPress={() => setRecipient(r)}
+                >
+                  <Ionicons
+                    name={r === 'clients' ? 'people-outline' : r === 'trainers' ? 'barbell-outline' : 'globe-outline'}
+                    size={14}
+                    color={recipient === r ? '#000' : Colors.textSecondary}
+                  />
+                  <Text style={[broadcastStyles.recipientText, recipient === r && broadcastStyles.recipientTextActive]}>
+                    {r.charAt(0).toUpperCase() + r.slice(1)}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
 
-        {/* Message */}
-        <Text style={broadcastStyles.label}>Message</Text>
-        <TextInput
-          style={broadcastStyles.input}
-          placeholder="Type your WhatsApp message..."
-          placeholderTextColor={Colors.textMuted}
-          value={message}
-          onChangeText={setMessage}
-          multiline
-          numberOfLines={5}
-          textAlignVertical="top"
-        />
-        <Text style={{ color: Colors.textMuted, fontFamily: 'Inter_400Regular', fontSize: 11, marginBottom: 8 }}>
-          {message.length}/1000 characters
-        </Text>
+            {/* Quick Templates */}
+            <Text style={broadcastStyles.label}>Quick Templates</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }}>
+              <View style={{ flexDirection: 'row', gap: 8, paddingRight: 8 }}>
+                {BROADCAST_TEMPLATES.map(t => (
+                  <Pressable key={t.label} style={broadcastStyles.templateChip} onPress={() => setMessage(t.text)}>
+                    <Text style={broadcastStyles.templateChipText}>{t.label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </ScrollView>
 
-        {!!sendError && (
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: Colors.dangerMuted, borderRadius: 10, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: Colors.danger + '40' }}>
-            <Ionicons name="alert-circle-outline" size={16} color={Colors.danger} style={{ marginTop: 1 }} />
-            <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.danger, flex: 1 }}>{sendError}</Text>
-          </View>
+            {/* Message */}
+            <Text style={broadcastStyles.label}>Message</Text>
+            <TextInput
+              style={broadcastStyles.input}
+              placeholder="Type your WhatsApp message..."
+              placeholderTextColor={Colors.textMuted}
+              value={message}
+              onChangeText={setMessage}
+              multiline
+              numberOfLines={5}
+              textAlignVertical="top"
+            />
+            <Text style={{ color: Colors.textMuted, fontFamily: 'Inter_400Regular', fontSize: 11, marginBottom: 8 }}>
+              {message.length}/1000 characters
+            </Text>
+
+            {!!sendError && sendError !== 'LIMIT_REACHED' && (
+              <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: Colors.dangerMuted, borderRadius: 10, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: Colors.danger + '40' }}>
+                <Ionicons name="alert-circle-outline" size={16} color={Colors.danger} style={{ marginTop: 1 }} />
+                <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.danger, flex: 1 }}>{sendError}</Text>
+              </View>
+            )}
+
+            <Pressable
+              style={[broadcastStyles.sendBtn, { backgroundColor: '#25D366' }, (!message.trim() || broadcast.isPending || cooldownSeconds > 0) && { opacity: 0.5 }]}
+              onPress={handleSend}
+              disabled={!message.trim() || broadcast.isPending || cooldownSeconds > 0}
+            >
+              {broadcast.isPending
+                ? <ActivityIndicator color="#fff" />
+                : cooldownSeconds > 0
+                  ? (
+                    <>
+                      <Ionicons name="time-outline" size={16} color="#fff" />
+                      <Text style={[broadcastStyles.sendBtnText, { color: '#fff' }]}>Wait {cooldownSeconds}s before next broadcast</Text>
+                    </>
+                  )
+                  : (
+                    <>
+                      <Ionicons name="logo-whatsapp" size={16} color="#fff" />
+                      <Text style={[broadcastStyles.sendBtnText, { color: '#fff' }]}>
+                        Send via WhatsApp to {recipient === 'both' ? 'Members & Trainers' : recipient === 'clients' ? 'Members' : 'Trainers'}
+                      </Text>
+                    </>
+                  )}
+            </Pressable>
+          </>
         )}
-
-        <Pressable
-          style={[broadcastStyles.sendBtn, { backgroundColor: '#25D366' }, (!message.trim() || broadcast.isPending) && { opacity: 0.5 }]}
-          onPress={handleSend}
-          disabled={!message.trim() || broadcast.isPending}
-        >
-          {broadcast.isPending
-            ? <ActivityIndicator color="#fff" />
-            : <>
-                <Ionicons name="logo-whatsapp" size={16} color="#fff" />
-                <Text style={[broadcastStyles.sendBtnText, { color: '#fff' }]}>
-                  Send via WhatsApp to {recipient === 'both' ? 'Members & Trainers' : recipient === 'clients' ? 'Members' : 'Trainers'}
-                </Text>
-              </>
-          }
-        </Pressable>
       </View>
     </KeyboardAvoidingView>
   );

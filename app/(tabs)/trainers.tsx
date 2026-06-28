@@ -32,6 +32,12 @@ function TrainerKPIRow({ trainerId, clientCount }: { trainerId: string; clientCo
         <Ionicons name="moon-outline" size={13} color={Colors.info} />
         <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 12, color: Colors.info }}>{stats.evening} Evening</Text>
       </View>
+      {stats.both > 0 && (
+        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: Colors.purple + '15', borderRadius: 8, padding: 8 }}>
+          <Ionicons name="sync-outline" size={13} color={Colors.purple} />
+          <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 12, color: Colors.purple }}>{stats.both} Both</Text>
+        </View>
+      )}
     </View>
   );
 }

@@ -58,6 +58,7 @@ export default function NotificationsScreen() {
       markRead.mutate({
         gymId: user?.gym_id,
         memberId: user?.member_id,
+        profileId: user?.role === 'trainer' ? user?.id : null,
       });
     }
   }, [isLoading]);

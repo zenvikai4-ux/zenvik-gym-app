@@ -12,6 +12,7 @@ import {
   useInsertActivity, useEnabledModules, useInsertMemberWithLogin,
   useBulkImportMembers, useBulkImportTrainers,
   useInsertLeadConversation, useSendWhatsAppMessage,
+  useSetMemberCredentials, useUpdateTrainerCredentials,
 } from '@/lib/hooks';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { DatePicker } from '@/components/DatePicker';
@@ -51,45 +52,73 @@ function parseCSV(text: string): Record<string, string>[] {
 }
 
 // ── Credential Setup Modal (after import) ────────────────────────────
+// rows must be the ACTUAL inserted rows (with real ids), not raw CSV rows —
+// otherwise there is nothing for the saved credentials to attach to.
 function CredentialSetupModal({ visible, rows, importType, gymId, onClose }: {
   visible: boolean;
-  rows: Array<{ name: string; email?: string; phone?: string }>;
+  rows: Array<{ id: string; name: string; email?: string; phone?: string }>;
   importType: 'members' | 'trainers';
   gymId: string;
   onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const setMemberCreds = useSetMemberCredentials();
+  const updateTrainerCreds = useUpdateTrainerCredentials();
   // one credential entry per imported row
   const [creds, setCreds] = useState<Array<{ email: string; password: string; showPass: boolean }>>([]);
   const [saving, setSaving] = useState(false);
-  const [savedCount, setSavedCount] = useState(0);
+  const [rowErrors, setRowErrors] = useState<Record<number, string>>({});
 
   useEffect(() => {
     if (visible) {
-      setCreds(rows.map(r => ({ email: r.email || '', password: '', showPass: false })));
-      setSavedCount(0);
+      setCreds(rows.map(r => ({ email: importType === 'members' ? '' : (r.email || ''), password: '', showPass: false })));
+      setRowErrors({});
     }
-  }, [visible, rows]);
+  }, [visible, rows, importType]);
 
   const handleSave = async () => {
     setSaving(true);
+    const errors: Record<number, string> = {};
     let count = 0;
     for (let i = 0; i < rows.length; i++) {
       const email = creds[i]?.email?.trim();
       const password = creds[i]?.password;
-      if (!email || !password || password.length < 6) continue;
+      if (!email || !password) continue; // skipped rows are fine — credentials are optional
+      if (password.length < 6) { errors[i] = 'Password must be at least 6 characters'; continue; }
       try {
-        // Update profile email first
-        await supabase.from('profiles').update({ email }).eq('gym_id', gymId).eq('name', rows[i].name);
-        // Update auth password via admin RPC if available
-        await supabase.rpc('set_user_password' as any, { user_email: email, new_password: password }).maybeSingle();
+        if (importType === 'members') {
+          await setMemberCreds.mutateAsync({
+            member_id: rows[i].id,
+            gym_id: gymId,
+            name: rows[i].name,
+            email,
+            password,
+          });
+        } else {
+          await updateTrainerCreds.mutateAsync({
+            profile_id: rows[i].id,
+            old_email: rows[i].email || '',
+            new_email: email,
+            new_password: password,
+          });
+        }
         count++;
-      } catch (_) {}
+      } catch (e: any) {
+        errors[i] = e?.message || 'Failed to save';
+      }
     }
     setSaving(false);
-    setSavedCount(count);
-    Alert.alert('Done', `${count} credential(s) set successfully.`);
-    onClose();
+    setRowErrors(errors);
+    const failedCount = Object.keys(errors).length;
+    if (failedCount > 0) {
+      Alert.alert(
+        'Some credentials failed',
+        `${count} saved successfully. ${failedCount} failed — see the errors below and try again, or skip them.`
+      );
+    } else {
+      Alert.alert('Done', `${count} credential(s) set successfully.`);
+      onClose();
+    }
   };
 
   return (
@@ -100,11 +129,11 @@ function CredentialSetupModal({ visible, rows, importType, gymId, onClose }: {
           <Pressable onPress={onClose}><Ionicons name="close" size={24} color={Colors.text} /></Pressable>
         </View>
         <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary, marginBottom: 16 }}>
-          Optionally assign email and password for each imported {importType === 'members' ? 'member' : 'trainer'} so they can log in.
+          Optionally assign email and password for each imported {importType === 'members' ? 'member' : 'trainer'} so they can log in. Leave blank to skip a row.
         </Text>
         <ScrollView showsVerticalScrollIndicator={false}>
           {rows.map((row, i) => (
-            <View key={i} style={[styles.loginSection, { marginBottom: 14 }]}>
+            <View key={row.id || i} style={[styles.loginSection, { marginBottom: 14 }]}>
               <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 14, color: Colors.text, marginBottom: 10 }}>
                 {i + 1}. {row.name}
               </Text>
@@ -136,6 +165,12 @@ function CredentialSetupModal({ visible, rows, importType, gymId, onClose }: {
                   </Pressable>
                 </View>
               </View>
+              {!!rowErrors[i] && (
+                <View style={{ flexDirection: 'row', gap: 6, alignItems: 'flex-start', marginTop: 4 }}>
+                  <Ionicons name="alert-circle-outline" size={14} color={Colors.danger} style={{ marginTop: 1 }} />
+                  <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 12, color: Colors.danger, flex: 1 }}>{rowErrors[i]}</Text>
+                </View>
+              )}
             </View>
           ))}
           <Pressable style={[styles.submitBtn, saving && { opacity: 0.6 }]} onPress={handleSave} disabled={saving}>
@@ -163,7 +198,7 @@ function ImportModal({ visible, onClose, gymId, trainerList }: {
   const [result, setResult] = useState<{ success: number; failed: number; errors: string[] } | null>(null);
   const [importing, setImporting] = useState(false);
   const [showCredModal, setShowCredModal] = useState(false);
-  const [importedRows, setImportedRows] = useState<any[]>([]);
+  const [importedRows, setImportedRows] = useState<Array<{ id: string; name: string; email?: string; phone?: string }>>([]);
 
   const preview = csvText.trim() ? parseCSV(csvText).slice(0, 3) : [];
 
@@ -172,12 +207,14 @@ function ImportModal({ visible, onClose, gymId, trainerList }: {
     if (rows.length === 0) { Alert.alert('No data', 'Paste CSV data first'); return; }
     setImporting(true);
     setResult(null);
+    let lastResult: { success: number; failed: number; errors: string[] } | null = null;
     try {
       if (importType === 'members') {
         const r = await bulkImportMembers.mutateAsync({ gym_id: gymId, rows: rows as any, trainerList });
+        lastResult = r;
         setResult(r);
-        if (r.success > 0) {
-          setImportedRows(rows.slice(0, r.success));
+        if (r.insertedMembers?.length) {
+          setImportedRows(r.insertedMembers);
           // Only show credential modal if Client Login module is enabled
           const { data: mods } = await supabase.from('gym_modules')
             .select('is_enabled, module:modules(name)')
@@ -187,9 +224,10 @@ function ImportModal({ visible, onClose, gymId, trainerList }: {
         }
       } else {
         const r = await bulkImportTrainers.mutateAsync({ gym_id: gymId, rows: rows as any });
+        lastResult = r;
         setResult(r);
-        if (r.success > 0) {
-          setImportedRows(rows.slice(0, r.success));
+        if (r.insertedTrainers?.length) {
+          setImportedRows(r.insertedTrainers);
           // Only show credential modal if Trainer Login module is enabled
           const { data: mods } = await supabase.from('gym_modules')
             .select('is_enabled, module:modules(name)')
@@ -199,7 +237,7 @@ function ImportModal({ visible, onClose, gymId, trainerList }: {
         }
       }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      if (!result || result.failed === 0) setCsvText('');
+      if (!lastResult || lastResult.failed === 0) setCsvText('');
     } catch (e: any) {
       Alert.alert('Import failed', e.message);
     }

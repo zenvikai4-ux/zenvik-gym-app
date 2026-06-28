@@ -26,6 +26,11 @@ Notifications.setNotificationHandler({
     shouldShowAlert: true,
     shouldPlaySound: true,
     shouldSetBadge: true,
+    // Required by the installed expo-notifications version's
+    // NotificationBehavior type — controls foreground presentation as a
+    // banner and in the notification list/tray, separate from shouldShowAlert.
+    shouldShowBanner: true,
+    shouldShowList: true,
   }),
 });
 

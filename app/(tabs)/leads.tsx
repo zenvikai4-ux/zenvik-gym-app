@@ -94,12 +94,29 @@ function LeadDetailModal({
   const handleSend = async () => {
     if (!replyText.trim() || !lead) return;
     setSending(true);
+    const messageText = replyText.trim();
     try {
-      await sendWA.mutateAsync({ phone: lead.phone, message: replyText.trim(), gymId: lead.gym_id });
-      await insertConvo.mutateAsync({ lead_id: lead.id, gym_id: lead.gym_id, role: 'owner', message: replyText.trim() });
-      await supabase.from('leads').update({ owner_last_replied_at: new Date().toISOString() }).eq('id', lead.id);
+      // 1. Actually send the WhatsApp message — if this fails, nothing else
+      // should run and the error shown should be about the send itself.
+      await sendWA.mutateAsync({ phone: lead.phone, message: messageText, gymId: lead.gym_id });
+
+      // The message has now been delivered. Anything past this point
+      // (saving the conversation log, updating owner_last_replied_at) is
+      // bookkeeping — failures here should not make it look like the
+      // message itself failed to send.
       setReplyText('');
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 300);
+
+      try {
+        await insertConvo.mutateAsync({ lead_id: lead.id, gym_id: lead.gym_id, role: 'owner', message: messageText });
+      } catch (logErr: any) {
+        console.warn('Failed to save owner reply to conversation log:', logErr?.message);
+      }
+      try {
+        await supabase.from('leads').update({ owner_last_replied_at: new Date().toISOString() }).eq('id', lead.id);
+      } catch (updateErr: any) {
+        console.warn('Failed to update owner_last_replied_at:', updateErr?.message);
+      }
     } catch (e: any) {
       Alert.alert('Failed to send', e.message);
     } finally {
