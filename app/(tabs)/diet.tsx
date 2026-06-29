@@ -189,6 +189,9 @@ function DietPlanSection({ profileId, gymId, tabBarHeight }: { profileId: string
   const [weightInput, setWeightInput] = useState('');
   const [weightNotes, setWeightNotes] = useState('');
   const [showAddWeight, setShowAddWeight] = useState(false);
+  const [applyMode, setApplyMode] = useState(false);
+  const [applyDays, setApplyDays] = useState<number[]>([]);
+  const [applying, setApplying] = useState(false);
 
   const latestWeight = weightHistory.length > 0 ? weightHistory[weightHistory.length - 1] : null;
   const firstWeight = weightHistory.length > 0 ? weightHistory[0] : null;
@@ -235,6 +238,43 @@ function DietPlanSection({ profileId, gymId, tabBarHeight }: { profileId: string
       setCopying(false);
     }
   };
+
+  // Apply the CURRENT day's meals to one or more other days at once — either
+  // the whole week in one tap, or a custom selection (e.g. just weekdays).
+  const toggleApplyDay = (dayIdx: number) => {
+    setApplyDays(prev => prev.includes(dayIdx) ? prev.filter(d => d !== dayIdx) : [...prev, dayIdx]);
+  };
+
+  const applyCurrentDayToDays = async (targetDays: number[]) => {
+    if (!dayPlans.length) {
+      Alert.alert('Nothing to apply', `${DAY_NAMES[activeDay]} has no meals set yet. Add meals first, then apply them to other days.`);
+      return;
+    }
+    const days = targetDays.filter(d => d !== activeDay);
+    if (!days.length) {
+      Alert.alert('Select other days', 'Choose at least one day other than the current one.');
+      return;
+    }
+    setApplying(true);
+    try {
+      for (const day of days) {
+        for (const p of dayPlans) {
+          await upsertPlan.mutateAsync({ client_profile_id: profileId, gym_id: gymId, day_of_week: day, meal_slot: p.meal_slot, items: p.items });
+        }
+      }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert('Applied', `${DAY_NAMES[activeDay]}'s meals were applied to ${days.length} day${days.length !== 1 ? 's' : ''}.`);
+      setApplyMode(false);
+      setApplyDays([]);
+    } catch (e: any) {
+      Alert.alert('Apply failed', e.message);
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  const handleApplyToWholeWeek = () => applyCurrentDayToDays([0, 1, 2, 3, 4, 5, 6]);
+  const handleApplyToSelectedDays = () => applyCurrentDayToDays(applyDays);
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -304,7 +344,7 @@ function DietPlanSection({ profileId, gymId, tabBarHeight }: { profileId: string
           )}
         </View>
 
-        {/* Day selector + copy from previous day */}
+        {/* Day selector + copy from previous day + apply to week */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.dayRow, { flex: 1 }]} contentContainerStyle={styles.dayContent}>
             {DAY_NAMES.map((day, i) => (
@@ -318,7 +358,7 @@ function DietPlanSection({ profileId, gymId, tabBarHeight }: { profileId: string
             ))}
           </ScrollView>
           <Pressable
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.border, marginRight: 4 }}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.border }}
             onPress={handleCopyFromPrevDay}
             disabled={copying}
           >
@@ -327,7 +367,63 @@ function DietPlanSection({ profileId, gymId, tabBarHeight }: { profileId: string
               : <Ionicons name="copy-outline" size={14} color={Colors.primary} />}
             <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.primary }}>Copy prev</Text>
           </Pressable>
+          <Pressable
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, backgroundColor: applyMode ? Colors.primaryMuted : Colors.card, borderWidth: 1, borderColor: applyMode ? Colors.primary : Colors.border, marginRight: 4 }}
+            onPress={() => { setApplyMode(v => !v); setApplyDays([]); Haptics.selectionAsync(); }}
+          >
+            <Ionicons name="calendar-outline" size={14} color={Colors.primary} />
+            <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.primary }}>Apply to days</Text>
+          </Pressable>
         </View>
+
+        {applyMode && (
+          <View style={{ backgroundColor: Colors.card, borderRadius: 12, borderWidth: 1, borderColor: Colors.border, padding: 12, gap: 10 }}>
+            <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 12, color: Colors.textSecondary }}>
+              Copy {DAY_NAMES[activeDay]}'s meals to:
+            </Text>
+            <Pressable
+              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, height: 38, borderRadius: 8, backgroundColor: Colors.primary }}
+              onPress={handleApplyToWholeWeek}
+              disabled={applying}
+            >
+              {applying ? <ActivityIndicator color="#000" size="small" /> : (
+                <>
+                  <Ionicons name="repeat-outline" size={15} color="#000" />
+                  <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: '#000' }}>Apply to whole week</Text>
+                </>
+              )}
+            </Pressable>
+            <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted, marginTop: 2 }}>
+              Or pick specific days:
+            </Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+              {DAY_NAMES.map((day, i) => {
+                if (i === activeDay) return null;
+                const selected = applyDays.includes(i);
+                return (
+                  <Pressable
+                    key={day}
+                    style={[styles.dayBtn, selected && styles.dayBtnActive]}
+                    onPress={() => toggleApplyDay(i)}
+                  >
+                    <Text style={[styles.dayBtnText, selected && styles.dayBtnTextActive]}>{day}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Pressable
+              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, height: 38, borderRadius: 8, backgroundColor: applyDays.length ? Colors.secondary : Colors.border, opacity: applyDays.length ? 1 : 0.5 }}
+              onPress={handleApplyToSelectedDays}
+              disabled={applying || !applyDays.length}
+            >
+              {applying ? <ActivityIndicator color={Colors.text} size="small" /> : (
+                <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: Colors.text }}>
+                  Apply to {applyDays.length ? `${applyDays.length} selected day${applyDays.length !== 1 ? 's' : ''}` : 'selected days'}
+                </Text>
+              )}
+            </Pressable>
+          </View>
+        )}
 
       {MEAL_SLOTS.map(slot => {
         const plan = getPlanForSlot(slot.key);

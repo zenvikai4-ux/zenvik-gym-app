@@ -360,6 +360,24 @@ export function useDeleteMember() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
+      // Find the linked profile (if this member ever had Client Login
+      // credentials set up) so we can remove their login too — otherwise
+      // a deleted member's email/password keeps working indefinitely.
+      const { data: linkedProfile } = await supabase
+        .from('profiles')
+        .select('id, email')
+        .eq('member_id', id)
+        .maybeSingle();
+
+      if (linkedProfile?.email) {
+        try {
+          await supabase.rpc('delete_user_account' as any, { user_email: linkedProfile.email });
+        } catch (e: any) {
+          console.warn('delete_user_account failed (continuing with member deletion):', e?.message);
+        }
+        await supabase.from('profiles').delete().eq('id', linkedProfile.id);
+      }
+
       const { error } = await supabase.from('members').delete().eq('id', id);
       if (error) throw error;
     },
@@ -899,8 +917,11 @@ export function useNotifications(memberId?: string | null, gymId?: string | null
         // Trainer: see only notifications addressed to their profile
         q = q.eq('member_id', profileId).eq('gym_id', gymId);
       } else if (gymId) {
-        // Owner/Admin: see all gym notifications (includes null member_id summaries)
-        q = q.eq('gym_id', gymId);
+        // Owner/Admin: see only gym-wide summary notifications
+        // (member_id IS NULL) — e.g. broadcast_sent confirmations.
+        // Must NOT see individual members'/trainers' own notifications
+        // (diet plans, expiry reminders, etc.) — those belong to them only.
+        q = q.eq('gym_id', gymId).is('member_id', null);
       } else if (memberId) {
         q = q.eq('member_id', memberId);
       }
@@ -1341,6 +1362,26 @@ export function useDeleteGym() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
+      // A gym can have an owner profile plus trainer/member profiles, all
+      // with their own logins. Deleting the gym row alone left every one
+      // of those auth accounts active forever. Clean them all up first.
+      const { data: linkedProfiles } = await supabase
+        .from('profiles')
+        .select('id, email')
+        .eq('gym_id', id);
+
+      for (const p of linkedProfiles || []) {
+        if (!p.email) continue;
+        try {
+          await supabase.rpc('delete_user_account' as any, { user_email: p.email });
+        } catch (e: any) {
+          console.warn(`delete_user_account failed for ${p.email} (continuing):`, e?.message);
+        }
+      }
+      if (linkedProfiles?.length) {
+        await supabase.from('profiles').delete().eq('gym_id', id);
+      }
+
       const { error } = await supabase.from('gyms').delete().eq('id', id);
       if (error) throw error;
     },
@@ -1617,6 +1658,8 @@ export function useInsertTrainer() {
           await supabase.from('profiles').upsert({
             id: userId, name: params.name, email: params.email,
             role: 'trainer', gym_id: params.gym_id,
+            phone: params.phone || null,
+            specialization: params.specialization || null,
           });
         }
 
@@ -1978,6 +2021,8 @@ export function useBulkImportTrainers() {
             const { error } = await supabase.from('profiles').upsert({
               id: userId, name: row.name.trim(), email: systemEmail,
               role: 'trainer', gym_id: params.gym_id,
+              phone: row.phone?.trim() || null,
+              specialization: row.specialization?.trim() || null,
             });
             if (error) { results.failed++; results.errors.push(`${row.name}: ${error.message}`); }
             else {

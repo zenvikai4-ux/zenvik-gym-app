@@ -116,6 +116,13 @@ export default function TrainersScreen() {
   const handleDelete = async () => {
     if (!pendingDelete) return;
     setDeleteLoading(true);
+    if (pendingDelete.email) {
+      try {
+        await supabase.rpc('delete_user_account' as any, { user_email: pendingDelete.email });
+      } catch (e: any) {
+        console.warn('delete_user_account failed (continuing with trainer deletion):', e?.message);
+      }
+    }
     await supabase.from('profiles').delete().eq('id', pendingDelete.profile_id || pendingDelete.id);
     qc.invalidateQueries({ queryKey: ['trainers'] });
     insertActivity.mutate({ gym_id: gymId || null, actor_name: user?.name || 'Owner', action: 'Removed trainer', details: pendingDelete.name });
