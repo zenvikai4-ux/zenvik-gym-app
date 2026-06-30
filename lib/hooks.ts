@@ -41,7 +41,15 @@ export function useUpdateGym() {
       if (error) throw error;
       return data;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['gyms'] }),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ['gyms'] });
+      // useGym(gymId) — used by the owner's broadcast screen to read
+      // broadcasts_per_month — caches under the SINGULAR 'gym' key, not
+      // 'gyms'. Without this, editing a gym's limit here would save
+      // correctly but the broadcast screen would keep showing the old
+      // value until something else happened to trigger a refetch.
+      qc.invalidateQueries({ queryKey: ['gym', vars.id] });
+    },
   });
 }
 
@@ -606,6 +614,212 @@ export function useDeleteDietPlan() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['diet_plans'] }),
     onError: (error: any) => {
       console.error('useDeleteDietPlan error:', error?.message ?? error);
+    },
+  });
+}
+
+// ── DIET PLAN DAY LINKING ───────────────────────────────────────────────
+// "Linked" days keep separate diet_plans rows but share a link_group_id.
+// Editing a meal on any linked day propagates that edit to every other row
+// sharing the same group. Unlinking just clears link_group_id back to null
+// on that one row — it keeps its current content and becomes independent.
+
+// Returns { [day_of_week]: link_group_id | null } for a profile, so the UI
+// can show which days are currently linked together.
+export function useDietLinkGroups(profileId?: string | null) {
+  return useQuery({
+    queryKey: ['diet_link_groups', profileId],
+    enabled: !!profileId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('diet_plans')
+        .select('day_of_week, link_group_id')
+        .eq('client_profile_id', profileId!)
+        .not('link_group_id', 'is', null);
+      if (error) throw error;
+      const byDay: Record<number, string> = {};
+      (data || []).forEach((row: any) => { byDay[row.day_of_week] = row.link_group_id; });
+      return byDay;
+    },
+  });
+}
+
+// Link a set of days together. If sourceDay already belongs to a group,
+// the new days join that same group (so linking is additive — you can grow
+// an existing group rather than always starting a fresh one). Otherwise a
+// new group id is created. Every meal slot that exists on sourceDay is
+// copied to every other selected day, and all of them are stamped with the
+// same link_group_id.
+export function useLinkDietDays() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (params: {
+      client_profile_id: string;
+      gym_id: string;
+      sourceDay: number;
+      days: number[]; // days to link WITH sourceDay (sourceDay is included automatically)
+    }) => {
+      const allDays = Array.from(new Set([params.sourceDay, ...params.days]));
+
+      // Reuse sourceDay's existing group id if it has one. Otherwise, mint a
+      // new group id by reading one existing UUID we already have on hand
+      // (a row id) rather than generating one client-side — avoids relying
+      // on crypto.randomUUID() in the RN/Hermes environment, which isn't
+      // guaranteed to be available without an extra polyfill.
+      const { data: existingSourceRows } = await supabase
+        .from('diet_plans')
+        .select('id, link_group_id')
+        .eq('client_profile_id', params.client_profile_id)
+        .eq('day_of_week', params.sourceDay)
+        .limit(1);
+      let groupId: string | undefined = existingSourceRows?.[0]?.link_group_id;
+      if (!groupId) {
+        // Use sourceDay's own row id as the new group's id — it's already
+        // a valid, unique UUID generated server-side, so it's safe to
+        // reuse here rather than generating a fresh one client-side.
+        groupId = existingSourceRows?.[0]?.id;
+        if (!groupId) {
+          // sourceDay has no rows at all yet (no meals set) — fall back to
+          // generating one via a trivial insert+delete is wasteful, so
+          // instead require the caller to have at least one meal saved on
+          // sourceDay before linking. This matches the UI, which already
+          // disables linking until sourceDay has meals (see diet.tsx).
+          throw new Error('Add at least one meal to this day before linking it with other days.');
+        }
+      }
+
+      // Get sourceDay's current meals to copy into the other linked days.
+      const { data: sourcePlans, error: sourceError } = await supabase
+        .from('diet_plans')
+        .select('meal_slot, items')
+        .eq('client_profile_id', params.client_profile_id)
+        .eq('day_of_week', params.sourceDay);
+      if (sourceError) throw sourceError;
+
+      for (const day of allDays) {
+        if (sourcePlans?.length) {
+          for (const p of sourcePlans) {
+            const { data: existing } = await supabase
+              .from('diet_plans')
+              .select('id')
+              .eq('client_profile_id', params.client_profile_id)
+              .eq('day_of_week', day)
+              .eq('meal_slot', p.meal_slot)
+              .maybeSingle();
+            if (existing?.id) {
+              await supabase.from('diet_plans').update({ items: p.items, link_group_id: groupId }).eq('id', existing.id);
+            } else {
+              await supabase.from('diet_plans').insert({
+                client_profile_id: params.client_profile_id, gym_id: params.gym_id,
+                day_of_week: day, meal_slot: p.meal_slot, items: p.items, link_group_id: groupId,
+              });
+            }
+          }
+        } else {
+          // sourceDay has no meals yet — still mark the day as linked so
+          // future edits propagate, even though there's nothing to copy yet.
+          await supabase.from('diet_plans')
+            .update({ link_group_id: groupId })
+            .eq('client_profile_id', params.client_profile_id)
+            .eq('day_of_week', day);
+        }
+      }
+      return { groupId, days: allDays };
+    },
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ['diet_plans'] });
+      qc.invalidateQueries({ queryKey: ['diet_link_groups', vars.client_profile_id] });
+    },
+  });
+}
+
+// Unlink ONE day from its group. Keeps its current content as-is; just
+// clears link_group_id so future edits on this day no longer propagate
+// and edits elsewhere no longer propagate to it.
+export function useUnlinkDietDay() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (params: { client_profile_id: string; day_of_week: number }) => {
+      const { error } = await supabase
+        .from('diet_plans')
+        .update({ link_group_id: null })
+        .eq('client_profile_id', params.client_profile_id)
+        .eq('day_of_week', params.day_of_week);
+      if (error) throw error;
+    },
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ['diet_plans'] });
+      qc.invalidateQueries({ queryKey: ['diet_link_groups', vars.client_profile_id] });
+    },
+  });
+}
+
+// Save an edit to one meal slot and propagate it to every OTHER day that
+// currently shares the same link_group_id (if any). If the edited day
+// isn't linked to anything, this behaves exactly like a normal single-day
+// save.
+export function usePropagateDietEdit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (params: {
+      client_profile_id: string;
+      gym_id: string;
+      day_of_week: number;
+      meal_slot: string;
+      items: string;
+    }) => {
+      // Find the link group (if any) for the day being edited.
+      const { data: editedRow } = await supabase
+        .from('diet_plans')
+        .select('id, link_group_id')
+        .eq('client_profile_id', params.client_profile_id)
+        .eq('day_of_week', params.day_of_week)
+        .eq('meal_slot', params.meal_slot)
+        .maybeSingle();
+
+      const groupId: string | null = editedRow?.link_group_id ?? null;
+
+      // Save the edited day itself first.
+      if (editedRow?.id) {
+        const { error } = await supabase.from('diet_plans').update({ items: params.items }).eq('id', editedRow.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('diet_plans').insert({
+          client_profile_id: params.client_profile_id, gym_id: params.gym_id,
+          day_of_week: params.day_of_week, meal_slot: params.meal_slot, items: params.items,
+        });
+        if (error) throw error;
+      }
+
+      // Propagate to every OTHER row in the same group + same meal slot.
+      if (groupId) {
+        const { data: groupRows } = await supabase
+          .from('diet_plans')
+          .select('id, day_of_week')
+          .eq('client_profile_id', params.client_profile_id)
+          .eq('link_group_id', groupId)
+          .eq('meal_slot', params.meal_slot)
+          .neq('day_of_week', params.day_of_week);
+        for (const row of groupRows || []) {
+          await supabase.from('diet_plans').update({ items: params.items }).eq('id', row.id);
+        }
+      }
+
+      // Trigger diet notification + WhatsApp via gym server for the edited day.
+      if (params.gym_id) {
+        const GYM_SERVER = process.env.EXPO_PUBLIC_GYM_SERVER_URL || 'https://zenvik-gym-server-production.up.railway.app';
+        fetch(`${GYM_SERVER}/diet/assigned`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_profile_id: params.client_profile_id, gym_id: params.gym_id }),
+        }).catch(e => console.warn('diet/assigned trigger failed:', e.message));
+      }
+
+      return { groupId };
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['diet_plans'] }),
+    onError: (error: any) => {
+      console.error('usePropagateDietEdit error:', error?.message ?? error);
     },
   });
 }

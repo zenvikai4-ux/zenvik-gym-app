@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable,
-  TextInput, ActivityIndicator, Alert, KeyboardAvoidingView, Platform,
+  TextInput, ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/context/AuthContext';
 import {
   useClientProfiles, useDietPlans, useUpsertDietPlan,
   useDeleteDietPlan, useInsertClientProfile, useWeightHistory, useInsertWeightHistory,
+  usePropagateDietEdit, useLinkDietDays, useUnlinkDietDay, useDietLinkGroups,
 } from '@/lib/hooks';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Colors } from '@/constants/colors';
@@ -182,7 +183,11 @@ function DietPlanSection({ profileId, gymId, tabBarHeight }: { profileId: string
     new Date().getDay() === 0 ? 6 : new Date().getDay() - 1
   );
   const upsertPlan = useUpsertDietPlan();
+  const propagateEdit = usePropagateDietEdit();
   const deletePlan = useDeleteDietPlan();
+  const linkDays = useLinkDietDays();
+  const unlinkDay = useUnlinkDietDay();
+  const { data: linkGroups = {} } = useDietLinkGroups(profileId);
   const [editingSlot, setEditingSlot] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
   const [copying, setCopying] = useState(false);
@@ -192,6 +197,11 @@ function DietPlanSection({ profileId, gymId, tabBarHeight }: { profileId: string
   const [applyMode, setApplyMode] = useState(false);
   const [applyDays, setApplyDays] = useState<number[]>([]);
   const [applying, setApplying] = useState(false);
+  const [linking, setLinking] = useState(false);
+  // When saving an edit on a linked day, this holds the pending save until
+  // the user confirms Continue / Unlink / Cancel.
+  const [pendingLinkedSave, setPendingLinkedSave] = useState<{ slot: string; items: string } | null>(null);
+  const [showUnlinkPicker, setShowUnlinkPicker] = useState(false);
 
   const latestWeight = weightHistory.length > 0 ? weightHistory[weightHistory.length - 1] : null;
   const firstWeight = weightHistory.length > 0 ? weightHistory[0] : null;
@@ -202,14 +212,24 @@ function DietPlanSection({ profileId, gymId, tabBarHeight }: { profileId: string
   const dayPlans = plans.filter((p: any) => p.day_of_week === activeDay);
   const getPlanForSlot = (slot: string) => dayPlans.find((p: any) => p.meal_slot === slot);
 
-  const handleSaveSlot = (slot: string) => {
-    if (!editText.trim()) return;
-    upsertPlan.mutate(
-      { client_profile_id: profileId, gym_id: gymId, day_of_week: activeDay, meal_slot: slot, items: editText.trim() },
+  const linkedDayNames = (day: number): string[] => {
+    const group = linkGroups[day];
+    if (!group) return [];
+    return Object.keys(linkGroups)
+      .map(Number)
+      .filter(d => d !== day && linkGroups[d] === group)
+      .map(d => DAY_NAMES[d]);
+  };
+
+  const doSaveSlot = (slot: string, items: string) => {
+    propagateEdit.mutate(
+      { client_profile_id: profileId, gym_id: gymId, day_of_week: activeDay, meal_slot: slot, items },
       {
         onSuccess: () => {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           setEditingSlot(null);
+          setPendingLinkedSave(null);
+          setShowUnlinkPicker(false);
         },
         onError: (err: any) => {
           console.error('Save diet plan error:', err);
@@ -217,6 +237,43 @@ function DietPlanSection({ profileId, gymId, tabBarHeight }: { profileId: string
         },
       }
     );
+  };
+
+  const handleSaveSlot = (slot: string) => {
+    if (!editText.trim()) return;
+    const linked = linkedDayNames(activeDay);
+    if (linked.length > 0) {
+      // This day is linked to others — confirm before propagating the edit.
+      setPendingLinkedSave({ slot, items: editText.trim() });
+      return;
+    }
+    doSaveSlot(slot, editText.trim());
+  };
+
+  const handleConfirmLinkedSave = () => {
+    if (!pendingLinkedSave) return;
+    doSaveSlot(pendingLinkedSave.slot, pendingLinkedSave.items);
+  };
+
+  const handleUnlinkThenSave = async (daysToUnlink: number[]) => {
+    if (!pendingLinkedSave) return;
+    try {
+      for (const day of daysToUnlink) {
+        await unlinkDay.mutateAsync({ client_profile_id: profileId, day_of_week: day });
+      }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      // Stay on the unlink picker — linkGroups refetches after unlinking,
+      // so linkedDayNames(activeDay) recalculates automatically and the
+      // picker re-renders showing whichever days are still linked (or none),
+      // with the "save to remaining" / "save just to this day" button below.
+    } catch (e: any) {
+      Alert.alert('Unlink failed', e.message);
+    }
+  };
+
+  const handleCancelLinkedSave = () => {
+    setPendingLinkedSave(null);
+    setShowUnlinkPicker(false);
   };
 
   const handleCopyFromPrevDay = async () => {
@@ -239,22 +296,18 @@ function DietPlanSection({ profileId, gymId, tabBarHeight }: { profileId: string
     }
   };
 
-  // Apply the CURRENT day's meals to one or more other days at once — either
-  // the whole week in one tap, or a custom selection (e.g. just weekdays).
   const toggleApplyDay = (dayIdx: number) => {
     setApplyDays(prev => prev.includes(dayIdx) ? prev.filter(d => d !== dayIdx) : [...prev, dayIdx]);
   };
 
-  const applyCurrentDayToDays = async (targetDays: number[]) => {
+  // One-time copy of the current day's meals to the whole week — these days
+  // do NOT stay linked afterward, each becomes its own independent plan.
+  const applyCurrentDayToWholeWeek = async () => {
     if (!dayPlans.length) {
       Alert.alert('Nothing to apply', `${DAY_NAMES[activeDay]} has no meals set yet. Add meals first, then apply them to other days.`);
       return;
     }
-    const days = targetDays.filter(d => d !== activeDay);
-    if (!days.length) {
-      Alert.alert('Select other days', 'Choose at least one day other than the current one.');
-      return;
-    }
+    const days = [0, 1, 2, 3, 4, 5, 6].filter(d => d !== activeDay);
     setApplying(true);
     try {
       for (const day of days) {
@@ -263,7 +316,7 @@ function DietPlanSection({ profileId, gymId, tabBarHeight }: { profileId: string
         }
       }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert('Applied', `${DAY_NAMES[activeDay]}'s meals were applied to ${days.length} day${days.length !== 1 ? 's' : ''}.`);
+      Alert.alert('Applied', `${DAY_NAMES[activeDay]}'s meals were copied to all 7 days. Each day is independent — editing one won't affect the others.`);
       setApplyMode(false);
       setApplyDays([]);
     } catch (e: any) {
@@ -273,8 +326,37 @@ function DietPlanSection({ profileId, gymId, tabBarHeight }: { profileId: string
     }
   };
 
-  const handleApplyToWholeWeek = () => applyCurrentDayToDays([0, 1, 2, 3, 4, 5, 6]);
-  const handleApplyToSelectedDays = () => applyCurrentDayToDays(applyDays);
+  const handleApplyToWholeWeek = applyCurrentDayToWholeWeek;
+
+  // Link the current day with the selected days — they stay linked going
+  // forward: editing a meal on any one of them will prompt to update all.
+  const handleLinkSelectedDays = async () => {
+    if (!dayPlans.length) {
+      Alert.alert('Add meals first', `${DAY_NAMES[activeDay]} has no meals set yet. Add at least one meal before linking it with other days.`);
+      return;
+    }
+    if (!applyDays.length) {
+      Alert.alert('Select days', 'Choose at least one day to link with the current one.');
+      return;
+    }
+    setLinking(true);
+    try {
+      await linkDays.mutateAsync({
+        client_profile_id: profileId,
+        gym_id: gymId,
+        sourceDay: activeDay,
+        days: applyDays,
+      });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert('Linked', `${DAY_NAMES[activeDay]} is now linked with ${applyDays.map(d => DAY_NAMES[d]).join(', ')}. Editing any of these days will offer to update the others too.`);
+      setApplyMode(false);
+      setApplyDays([]);
+    } catch (e: any) {
+      Alert.alert('Link failed', e.message);
+    } finally {
+      setLinking(false);
+    }
+  };
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -347,15 +429,21 @@ function DietPlanSection({ profileId, gymId, tabBarHeight }: { profileId: string
         {/* Day selector + copy from previous day + apply to week */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.dayRow, { flex: 1 }]} contentContainerStyle={styles.dayContent}>
-            {DAY_NAMES.map((day, i) => (
-              <Pressable
-                key={day}
-                style={[styles.dayBtn, activeDay === i && styles.dayBtnActive]}
-                onPress={() => { setActiveDay(i); Haptics.selectionAsync(); }}
-              >
-                <Text style={[styles.dayBtnText, activeDay === i && styles.dayBtnTextActive]}>{day}</Text>
-              </Pressable>
-            ))}
+            {DAY_NAMES.map((day, i) => {
+              const isLinked = !!linkGroups[i];
+              return (
+                <Pressable
+                  key={day}
+                  style={[styles.dayBtn, activeDay === i && styles.dayBtnActive]}
+                  onPress={() => { setActiveDay(i); Haptics.selectionAsync(); }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    {isLinked && <Ionicons name="link" size={11} color={activeDay === i ? Colors.primary : Colors.textMuted} />}
+                    <Text style={[styles.dayBtnText, activeDay === i && styles.dayBtnTextActive]}>{day}</Text>
+                  </View>
+                </Pressable>
+              );
+            })}
           </ScrollView>
           <Pressable
             style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.border }}
@@ -376,6 +464,15 @@ function DietPlanSection({ profileId, gymId, tabBarHeight }: { profileId: string
           </Pressable>
         </View>
 
+        {linkGroups[activeDay] && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: Colors.primaryMuted, borderRadius: 8, padding: 8 }}>
+            <Ionicons name="link" size={13} color={Colors.primary} />
+            <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.primary, flex: 1 }}>
+              {DAY_NAMES[activeDay]} follows the same diet as: {linkedDayNames(activeDay).join(', ')}. Edits here update those days too.
+            </Text>
+          </View>
+        )}
+
         {applyMode && (
           <View style={{ backgroundColor: Colors.card, borderRadius: 12, borderWidth: 1, borderColor: Colors.border, padding: 12, gap: 10 }}>
             <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 12, color: Colors.textSecondary }}>
@@ -389,12 +486,12 @@ function DietPlanSection({ profileId, gymId, tabBarHeight }: { profileId: string
               {applying ? <ActivityIndicator color="#000" size="small" /> : (
                 <>
                   <Ionicons name="repeat-outline" size={15} color="#000" />
-                  <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: '#000' }}>Apply to whole week</Text>
+                  <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: '#000' }}>Apply to whole week (one-time copy)</Text>
                 </>
               )}
             </Pressable>
             <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted, marginTop: 2 }}>
-              Or pick specific days:
+              Or link specific days to always follow {DAY_NAMES[activeDay]}'s diet — future edits to any linked day update all of them:
             </Text>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
               {DAY_NAMES.map((day, i) => {
@@ -413,13 +510,16 @@ function DietPlanSection({ profileId, gymId, tabBarHeight }: { profileId: string
             </View>
             <Pressable
               style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, height: 38, borderRadius: 8, backgroundColor: applyDays.length ? Colors.secondary : Colors.border, opacity: applyDays.length ? 1 : 0.5 }}
-              onPress={handleApplyToSelectedDays}
-              disabled={applying || !applyDays.length}
+              onPress={handleLinkSelectedDays}
+              disabled={linking || !applyDays.length}
             >
-              {applying ? <ActivityIndicator color={Colors.text} size="small" /> : (
-                <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: Colors.text }}>
-                  Apply to {applyDays.length ? `${applyDays.length} selected day${applyDays.length !== 1 ? 's' : ''}` : 'selected days'}
-                </Text>
+              {linking ? <ActivityIndicator color={Colors.text} size="small" /> : (
+                <>
+                  <Ionicons name="link" size={14} color={Colors.text} />
+                  <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: Colors.text }}>
+                    Link {applyDays.length ? `${applyDays.length} selected day${applyDays.length !== 1 ? 's' : ''}` : 'selected days'} to {DAY_NAMES[activeDay]}
+                  </Text>
+                </>
               )}
             </Pressable>
           </View>
@@ -467,8 +567,8 @@ function DietPlanSection({ profileId, gymId, tabBarHeight }: { profileId: string
                   placeholderTextColor={Colors.textMuted}
                   multiline
                 />
-                <Pressable style={styles.mealSaveBtn} onPress={() => handleSaveSlot(slot.key)} disabled={upsertPlan.isPending}>
-                  {upsertPlan.isPending
+                <Pressable style={styles.mealSaveBtn} onPress={() => handleSaveSlot(slot.key)} disabled={propagateEdit.isPending}>
+                  {propagateEdit.isPending
                     ? <ActivityIndicator color="#000" size="small" />
                     : <Text style={styles.mealSaveBtnText}>Save</Text>
                   }
@@ -483,6 +583,98 @@ function DietPlanSection({ profileId, gymId, tabBarHeight }: { profileId: string
         );
       })}
       </ScrollView>
+
+      {/* Linked-day edit confirmation: Continue / Unlink / Cancel */}
+      <Modal visible={!!pendingLinkedSave} transparent animationType="fade" onRequestClose={handleCancelLinkedSave}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <View style={{ backgroundColor: Colors.card, borderRadius: 16, padding: 20, width: '100%', maxWidth: 380, gap: 14, borderWidth: 1, borderColor: Colors.border }}>
+            {!showUnlinkPicker ? (
+              <>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Ionicons name="link" size={18} color={Colors.primary} />
+                  <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 16, color: Colors.text }}>Linked Day</Text>
+                </View>
+                <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary, lineHeight: 19 }}>
+                  This will also update {linkedDayNames(activeDay).join(', ')} since {DAY_NAMES[activeDay]} is linked with {linkedDayNames(activeDay).length === 1 ? 'it' : 'them'}.
+                </Text>
+                <Pressable
+                  style={{ height: 42, borderRadius: 10, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' }}
+                  onPress={handleConfirmLinkedSave}
+                  disabled={propagateEdit.isPending}
+                >
+                  {propagateEdit.isPending
+                    ? <ActivityIndicator color="#000" size="small" />
+                    : <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 14, color: '#000' }}>Continue</Text>}
+                </Pressable>
+                <Pressable
+                  style={{ height: 42, borderRadius: 10, backgroundColor: Colors.secondary, alignItems: 'center', justifyContent: 'center' }}
+                  onPress={() => setShowUnlinkPicker(true)}
+                >
+                  <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 14, color: Colors.text }}>Unlink</Text>
+                </Pressable>
+                <Pressable style={{ alignItems: 'center', paddingVertical: 6 }} onPress={handleCancelLinkedSave}>
+                  <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.textMuted }}>Cancel</Text>
+                </Pressable>
+              </>
+            ) : (
+              <>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Ionicons name="link" size={18} color={Colors.primary} />
+                  <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 16, color: Colors.text }}>Unlink Days</Text>
+                </View>
+                <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary, lineHeight: 19 }}>
+                  Tap a day to unlink it. It will keep its current meals and stop following {DAY_NAMES[activeDay]}'s diet.
+                </Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  {linkedDayNames(activeDay).map(name => {
+                    const dayIdx = DAY_NAMES.indexOf(name);
+                    return (
+                      <Pressable
+                        key={name}
+                        style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, backgroundColor: Colors.secondary, borderWidth: 1, borderColor: Colors.border }}
+                        onPress={() => handleUnlinkThenSave([dayIdx])}
+                        disabled={unlinkDay.isPending}
+                      >
+                        <Ionicons name="close-circle" size={14} color={Colors.danger} />
+                        <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.text }}>{name}</Text>
+                      </Pressable>
+                    );
+                  })}
+                  {linkedDayNames(activeDay).length === 0 && (
+                    <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textMuted }}>
+                      No more linked days — {DAY_NAMES[activeDay]} is now independent.
+                    </Text>
+                  )}
+                </View>
+                {linkedDayNames(activeDay).length > 0 ? (
+                  <Pressable
+                    style={{ height: 42, borderRadius: 10, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center', marginTop: 4 }}
+                    onPress={handleConfirmLinkedSave}
+                    disabled={propagateEdit.isPending}
+                  >
+                    {propagateEdit.isPending
+                      ? <ActivityIndicator color="#000" size="small" />
+                      : <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 14, color: '#000' }}>Save to remaining linked days</Text>}
+                  </Pressable>
+                ) : (
+                  <Pressable
+                    style={{ height: 42, borderRadius: 10, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center', marginTop: 4 }}
+                    onPress={handleConfirmLinkedSave}
+                    disabled={propagateEdit.isPending}
+                  >
+                    {propagateEdit.isPending
+                      ? <ActivityIndicator color="#000" size="small" />
+                      : <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 14, color: '#000' }}>Save just to {DAY_NAMES[activeDay]}</Text>}
+                  </Pressable>
+                )}
+                <Pressable style={{ alignItems: 'center', paddingVertical: 6 }} onPress={handleCancelLinkedSave}>
+                  <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: Colors.textMuted }}>Cancel</Text>
+                </Pressable>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }

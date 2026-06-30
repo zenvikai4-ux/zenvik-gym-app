@@ -69,6 +69,7 @@ export default function MoreScreen() {
       { key: 'estimation', label: 'Estimation Calculator', icon: 'calculator-outline', color: Colors.warning },
       { key: 'whatsapp', label: 'WhatsApp', icon: 'logo-whatsapp', color: '#25D366' },
       { key: 'billing', label: 'Billing', icon: 'card-outline', color: Colors.info },
+      { key: 'support_queries', label: 'Support Queries', icon: 'chatbubbles-outline', color: Colors.primary },
     );
   }
 
@@ -177,6 +178,9 @@ export default function MoreScreen() {
       </Modal>
       <Modal visible={activeSection === 'billing'} animationType="slide" onRequestClose={() => setActiveSection(null)}>
         <BillingSection onClose={() => setActiveSection(null)} />
+      </Modal>
+      <Modal visible={activeSection === 'support_queries'} animationType="slide" onRequestClose={() => setActiveSection(null)}>
+        <SupportQueriesSection onClose={() => setActiveSection(null)} />
       </Modal>
       <Modal visible={activeSection === 'broadcast_whatsapp'} animationType="slide" transparent onRequestClose={() => setActiveSection(null)}>
         <BroadcastWhatsAppModal onClose={() => setActiveSection(null)} />
@@ -1965,6 +1969,7 @@ function BroadcastWhatsAppModal({ onClose }: { onClose: () => void }) {
         gym_id: gymId,
         sender_name: user?.name || 'Gym Owner',
         sender_role: 'gym_owner',
+        recipient: 'Support',
         message: `Requesting an increase to my monthly broadcast limit (currently ${broadcastsLimit}/month, already used ${broadcastsUsed}).`,
       },
       {
@@ -2351,7 +2356,11 @@ function GymQueriesSection({ onClose }: { onClose: () => void }) {
   const updateQuery = useUpdateQuery();
 
   const gymQueries = queries.filter((q: any) =>
-    q.gym_id === gymId && ['trainer', 'member'].includes(q.sender_role)
+    q.gym_id === gymId
+    && ['trainer', 'member'].includes(q.sender_role)
+    // Queries addressed to Support/Super Admin are NOT for the gym owner —
+    // those belong only on the Super Admin's own queries screen.
+    && q.recipient !== 'Support'
   );
 
   const handleMarkResolved = (id: string) => {
@@ -2391,6 +2400,86 @@ function GymQueriesSection({ onClose }: { onClose: () => void }) {
                   {new Date(q.created_at).toLocaleDateString('en-IN')}
                 </Text>
               </View>
+              <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary, lineHeight: 19 }}>{q.message}</Text>
+              {q.status !== 'resolved' ? (
+                <Pressable
+                  style={{ alignSelf: 'flex-start', backgroundColor: Colors.primaryMuted, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1, borderColor: Colors.primary + '40' }}
+                  onPress={() => handleMarkResolved(q.id)}
+                  disabled={updateQuery.isPending}
+                >
+                  <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 12, color: Colors.primary }}>Mark Resolved</Text>
+                </Pressable>
+              ) : (
+                <View style={{ flexDirection: 'row', gap: 4, alignItems: 'center' }}>
+                  <Ionicons name="checkmark-circle" size={14} color={Colors.primary} />
+                  <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 12, color: Colors.primary }}>Resolved</Text>
+                </View>
+              )}
+            </View>
+          ))}
+        </ScrollView>
+      )}
+    </View>
+  );
+}
+
+// ── Support Queries Section (Super Admin only) ───────────────────────────
+// Queries that trainers/members addressed specifically to "Support" (i.e.
+// the Super Admin), as opposed to "Gym Admin" which go to GymQueriesSection
+// for the gym owner instead. Previously these had nowhere to be seen —
+// they silently showed up in the owner's Staff Queries list instead,
+// regardless of which recipient the sender picked.
+function SupportQueriesSection({ onClose }: { onClose: () => void }) {
+  const insets = useSafeAreaInsets();
+  const { data: queries = [], isLoading, refetch, isRefetching } = useQueries(null, true);
+  const { data: gyms = [] } = useGyms();
+  const updateQuery = useUpdateQuery();
+
+  const supportQueries = queries.filter((q: any) => q.recipient === 'Support');
+  const gymNameById = (id: string) => gyms.find((g: any) => g.id === id)?.name || 'Unknown gym';
+
+  const handleMarkResolved = (id: string) => {
+    updateQuery.mutate({ id, status: 'resolved' }, {
+      onSuccess: () => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success),
+    });
+  };
+
+  return (
+    <View style={{ flex: 1, backgroundColor: Colors.background, paddingTop: insets.top }}>
+      <SectionHeader title="Support Queries" onClose={onClose} />
+      {isLoading ? (
+        <ActivityIndicator style={{ marginTop: 40 }} color={Colors.primary} />
+      ) : supportQueries.length === 0 ? (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+          <Ionicons name="chatbubbles-outline" size={48} color={Colors.textMuted} />
+          <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 16, color: Colors.text }}>No support queries yet</Text>
+          <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textMuted }}>Queries addressed to Support, from any gym, will appear here</Text>
+        </View>
+      ) : (
+        <ScrollView
+          contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: insets.bottom + 20 }}
+          refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.primary} />}
+        >
+          {supportQueries.map((q: any) => (
+            <View key={q.id} style={[section.card, { gap: 8 }]}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', flexShrink: 1 }}>
+                  <View style={{ backgroundColor: q.sender_role === 'trainer' ? Colors.warning + '20' : q.sender_role === 'member' ? Colors.info + '20' : Colors.purple + '20', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                    <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 11, color: q.sender_role === 'trainer' ? Colors.warning : q.sender_role === 'member' ? Colors.info : Colors.purple }}>
+                      {q.sender_role === 'trainer' ? '🏋️ Trainer' : q.sender_role === 'member' ? '👤 Member' : q.sender_role === 'gym_owner' ? '🏢 Owner' : q.sender_role}
+                    </Text>
+                  </View>
+                  <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: Colors.text }} numberOfLines={1}>{q.sender_name}</Text>
+                </View>
+                <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 11, color: Colors.textMuted }}>
+                  {new Date(q.created_at).toLocaleDateString('en-IN')}
+                </Text>
+              </View>
+              {!!q.gym_id && (
+                <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 11, color: Colors.textMuted }}>
+                  {gymNameById(q.gym_id)}
+                </Text>
+              )}
               <Text style={{ fontFamily: 'Inter_400Regular', fontSize: 13, color: Colors.textSecondary, lineHeight: 19 }}>{q.message}</Text>
               {q.status !== 'resolved' ? (
                 <Pressable
